@@ -10,136 +10,148 @@ export component TitleBar inherits Rectangle {
     background: transparent;
     height: 32px;
 
+    // Main row: status at the left.
     HorizontalLayout {
-        spacing: 6px;
-        alignment: center;
+        spacing: 0px;
+        alignment: start;
 
-        // Left: status, vertically centered
-        HorizontalLayout {
-            width: 92px;
-            spacing: 6px;
-            alignment: center;
+        // LEFT: keep the working Offline alignment unchanged.
+        Rectangle {
+            width: 120px;
+            background: transparent;
+
+            VerticalLayout {
+                alignment: center;
+
+                HorizontalLayout {
+                    spacing: 6px;
+                    alignment: start;
+
+                    VerticalLayout {
+                        alignment: center;
+
+                        Rectangle {
+                            width: 7px;
+                            height: 7px;
+                            border-radius: 4px;
+                            background: root.connected ? #0077C2 : #777A83;
+                        }
+                    }
+
+                    Text {
+                        text: root.connected ? "Online" : "Offline";
+                        color: #92959C;
+                        font-size: 11px;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+        }
+    }
+
+    // CENTER: independent overlay.
+    HorizontalLayout {
+        alignment: center;
+        spacing: 5px;
+
+        Text {
+            text: "Hi,";
+            color: #F0F0F2;
+            font-size: 14px;
+            font-weight: 600;
+            vertical-alignment: center;
+        }
+
+        Text {
+            text: root.username;
+            color: #0077C2;
+            font-size: 14px;
+            font-weight: 600;
+            overflow: elide;
+            vertical-alignment: center;
+        }
+    }
+
+    // RIGHT: independent overlay anchored to the right edge.
+    HorizontalLayout {
+        alignment: end;
+        spacing: 5px;
+
+        TouchArea {
+            width: 94px;
+            height: 27px;
 
             Rectangle {
-                width: 7px;
-                height: 7px;
+                width: 100%;
+                height: 100%;
                 border-radius: 4px;
-                background: root.connected ? #0077C2 : #777A83;
+                background: root.connected ? #191B1E : #0077C2;
+                border-width: 1px;
+                border-color: root.connected ? #303238 : #0077C2;
+
+                Text {
+                    text: root.connected ? "Disconnect" : "Connect";
+                    color: #F0F0F2;
+                    font-size: 11px;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
             }
 
-            Text {
-                text: root.connected ? "Online" : "Offline";
-                color: #92959C;
-                font-size: 11px;
-                vertical-alignment: center;
-            }
-        }
-
-        // Flexible spacer pushes greeting toward the center
-        Rectangle {
-            background: transparent;
-            horizontal-stretch: 1;
-        }
-
-        // Center: greeting, vertically centered
-        HorizontalLayout {
-            spacing: 5px;
-            alignment: center;
-
-            Text {
-                text: "Hi,";
-                color: #F0F0F2;
-                font-size: 14px;
-                font-weight: 600;
-                vertical-alignment: center;
-            }
-
-            Text {
-                text: root.username;
-                color: #0077C2;
-                font-size: 14px;
-                font-weight: 600;
-                overflow: elide;
-                vertical-alignment: center;
+            clicked => {
+                root.connection-toggle-requested();
             }
         }
 
-        // Flexible spacer pushes controls to the right
-        Rectangle {
-            background: transparent;
-            horizontal-stretch: 1;
+        TouchArea {
+            width: 29px;
+            height: 27px;
+
+            Rectangle {
+                width: 100%;
+                height: 100%;
+                border-radius: 4px;
+                background: #191B1E;
+                border-width: 1px;
+                border-color: #303238;
+
+                Text {
+                    text: "−";
+                    color: #F0F0F2;
+                    font-size: 16px;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+            }
+
+            clicked => {
+                root.minimize-requested();
+            }
         }
 
-        // Right: controls, vertically centered
-        HorizontalLayout {
-            spacing: 5px;
-            alignment: center;
+        TouchArea {
+            width: 29px;
+            height: 27px;
 
-            TouchArea {
-                width: 94px;
-                height: 27px;
+            Rectangle {
+                width: 100%;
+                height: 100%;
+                border-radius: 4px;
+                background: #191B1E;
+                border-width: 1px;
+                border-color: #303238;
 
-                Rectangle {
-                    background: root.connected ? #292B30 : #0077C2;
-                    border-radius: 4px;
-
-                    Text {
-                        text: root.connected ? "Disconnect" : "Connect";
-                        color: #FFFFFF;
-                        font-size: 11px;
-                        font-weight: 600;
-                        horizontal-alignment: center;
-                        vertical-alignment: center;
-                    }
-                }
-
-                clicked => {
-                    root.connection-toggle-requested();
+                Text {
+                    text: "×";
+                    color: #F0F0F2;
+                    font-size: 16px;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
                 }
             }
 
-            TouchArea {
-                width: 29px;
-                height: 27px;
-
-                Rectangle {
-                    background: #191B1E;
-                    border-radius: 4px;
-
-                    Text {
-                        text: "−";
-                        color: #92959C;
-                        font-size: 18px;
-                        horizontal-alignment: center;
-                        vertical-alignment: center;
-                    }
-                }
-
-                clicked => {
-                    root.minimize-requested();
-                }
-            }
-
-            TouchArea {
-                width: 29px;
-                height: 27px;
-
-                Rectangle {
-                    background: #191B1E;
-                    border-radius: 4px;
-
-                    Text {
-                        text: "×";
-                        color: #92959C;
-                        font-size: 17px;
-                        horizontal-alignment: center;
-                        vertical-alignment: center;
-                    }
-                }
-
-                clicked => {
-                    root.close-window-requested();
-                }
+            clicked => {
+                root.close-window-requested();
             }
         }
     }
