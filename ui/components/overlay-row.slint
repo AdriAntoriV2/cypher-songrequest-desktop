@@ -1,36 +1,72 @@
 
 export component OverlayRow inherits Rectangle {
-    in property <string> label: "";
+    in property <string> label: "Overlay";
     in property <string> url: "";
-
     callback copy-requested(string);
 
     background: transparent;
-    height: 28px;
+    height: 30px;
 
+    // Left: overlay name.
     HorizontalLayout {
-        spacing: 8px;
-        alignment: center;
+        spacing: 0px;
+        alignment: start;
 
-        Text {
-            text: root.label;
-            color: #C8C9CE;
-            font-size: 11px;
-            horizontal-stretch: 1;
-            vertical-alignment: center;
+        Rectangle {
+            width: 120px;
+            background: transparent;
+
+            VerticalLayout {
+                alignment: center;
+
+                Text {
+                    text: root.label;
+                    color: #E3E4E7;
+                    font-size: 11px;
+                    vertical-alignment: center;
+                }
+            }
         }
+
+        // Center: URL centered independently of the side regions.
+        Rectangle {
+            horizontal-stretch: 1;
+            background: transparent;
+
+            HorizontalLayout {
+                alignment: center;
+
+                Text {
+                    text: root.url;
+                    color: #92959C;
+                    font-size: 10px;
+                    overflow: elide;
+                    vertical-alignment: center;
+                }
+            }
+        }
+    }
+
+    // Right: Copy URL button, independent of the main row.
+    HorizontalLayout {
+        alignment: end;
+        spacing: 0px;
 
         TouchArea {
             width: 82px;
             height: 25px;
 
             Rectangle {
-                background: #292B30;
+                width: 100%;
+                height: 100%;
                 border-radius: 3px;
+                background: #102A3A;
+                border-width: 1px;
+                border-color: #0077C2;
 
                 Text {
                     text: "Copy URL";
-                    color: #F0F0F2;
+                    color: #0077C2;
                     font-size: 10px;
                     horizontal-alignment: center;
                     vertical-alignment: center;

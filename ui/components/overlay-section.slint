@@ -22,7 +22,7 @@ export component OverlaySection inherits Rectangle {
 
             HorizontalLayout {
                 spacing: 7px;
-                alignment: center;
+                alignment: start;
 
                 Text {
                     text: root.expanded ? "⌄" : "›";
@@ -43,7 +43,7 @@ export component OverlaySection inherits Rectangle {
                 }
 
                 Text {
-                    text: "3 sources";
+                    text: "Click here to copy Browser Source for your OBS";
                     color: #858891;
                     font-size: 10px;
                 }
