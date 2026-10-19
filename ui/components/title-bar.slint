@@ -10,12 +10,19 @@ export component TitleBar inherits Rectangle {
     background: transparent;
     height: 32px;
 
-    // Main row: status at the left.
+    // Drag the borderless window using otherwise empty title-bar space.
+    WindowMoveArea {
+        x: 0px;
+        y: 0px;
+        width: 100%;
+        height: 100%;
+    }
+
+    // LEFT: connection status.
     HorizontalLayout {
         spacing: 0px;
         alignment: start;
 
-        // LEFT: keep the working Offline alignment unchanged.
         Rectangle {
             width: 120px;
             background: transparent;
@@ -49,7 +56,7 @@ export component TitleBar inherits Rectangle {
         }
     }
 
-    // CENTER: independent overlay.
+    // CENTER: greeting.
     HorizontalLayout {
         alignment: center;
         spacing: 5px;
@@ -72,7 +79,7 @@ export component TitleBar inherits Rectangle {
         }
     }
 
-    // RIGHT: independent overlay anchored to the right edge.
+    // RIGHT: interactive controls stay above the drag area.
     HorizontalLayout {
         alignment: end;
         spacing: 5px;

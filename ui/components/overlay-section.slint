@@ -5,6 +5,10 @@ export component OverlaySection inherits Rectangle {
     in-out property <bool> expanded: false;
     in-out property <string> copy-status: "";
 
+    in-out property <string> queue-copy-status: "";
+    in-out property <string> played-now-copy-status: "";
+    in-out property <string> player-copy-status: "";
+
     callback copy-overlay-url(string) -> bool;
 
     background: #191B1E;
@@ -13,8 +17,8 @@ export component OverlaySection inherits Rectangle {
     border-radius: 3px;
 
     VerticalLayout {
-        padding: 7px;
-        spacing: 7px;
+        padding: 5px;
+        spacing: 4px;
 
         TouchArea {
             height: 24px;
@@ -52,11 +56,14 @@ export component OverlaySection inherits Rectangle {
             clicked => {
                 root.expanded = !root.expanded;
                 root.copy-status = "";
+                root.queue-copy-status = "";
+                root.played-now-copy-status = "";
+                root.player-copy-status = "";
             }
         }
 
-        if root.expanded : VerticalLayout {
-            spacing: 6px;
+        if root.expanded: VerticalLayout {
+            spacing: 4px;
 
             Rectangle {
                 height: 1px;
@@ -66,46 +73,43 @@ export component OverlaySection inherits Rectangle {
             OverlayRow {
                 label: "Queue";
                 url: "http://127.0.0.1:8765/queue.html";
+                copy-status: root.queue-copy-status;
 
                 copy-requested(url) => {
-                    if root.copy-overlay-url(url) {
-                        root.copy-status = "Copied URL";
-                    } else {
-                        root.copy-status = "Copy failed";
-                    }
+                    root.queue-copy-status =
+                        root.copy-overlay-url(url) ? "Copied URL" : "Copy failed";
+                    root.played-now-copy-status = "";
+                    root.player-copy-status = "";
+                    root.copy-status = "";
                 }
             }
 
             OverlayRow {
                 label: "Played Now";
                 url: "http://127.0.0.1:8765/played-now.html";
+                copy-status: root.played-now-copy-status;
 
                 copy-requested(url) => {
-                    if root.copy-overlay-url(url) {
-                        root.copy-status = "Copied URL";
-                    } else {
-                        root.copy-status = "Copy failed";
-                    }
+                    root.played-now-copy-status =
+                        root.copy-overlay-url(url) ? "Copied URL" : "Copy failed";
+                    root.queue-copy-status = "";
+                    root.player-copy-status = "";
+                    root.copy-status = "";
                 }
             }
 
             OverlayRow {
                 label: "Player";
                 url: "http://127.0.0.1:8765/player.html";
+                copy-status: root.player-copy-status;
 
                 copy-requested(url) => {
-                    if root.copy-overlay-url(url) {
-                        root.copy-status = "Copied URL";
-                    } else {
-                        root.copy-status = "Copy failed";
-                    }
+                    root.player-copy-status =
+                        root.copy-overlay-url(url) ? "Copied URL" : "Copy failed";
+                    root.queue-copy-status = "";
+                    root.played-now-copy-status = "";
+                    root.copy-status = "";
                 }
-            }
-
-            Text {
-                text: root.copy-status;
-                color: #0077C2;
-                font-size: 10px;
             }
         }
     }

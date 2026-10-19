@@ -2,55 +2,80 @@
 export component OverlayRow inherits Rectangle {
     in property <string> label: "Overlay";
     in property <string> url: "";
+    in property <string> copy-status: "";
+
     callback copy-requested(string);
 
     background: transparent;
+    width: 100%;
     height: 30px;
 
-    // Left: overlay name.
+    // Name and URL use the row's available space.
     HorizontalLayout {
+        x: 0px;
+        y: 0px;
+        width: 100%;
+        height: 30px;
         spacing: 0px;
-        alignment: start;
 
         Rectangle {
             width: 120px;
             background: transparent;
 
-            VerticalLayout {
-                alignment: center;
-
-                Text {
-                    text: root.label;
-                    color: #E3E4E7;
-                    font-size: 11px;
-                    vertical-alignment: center;
-                }
+            Text {
+                x: 0px;
+                y: 0px;
+                width: 120px;
+                height: 30px;
+                text: root.label;
+                color: #E3E4E7;
+                font-size: 11px;
+                vertical-alignment: center;
             }
         }
 
-        // Center: URL centered independently of the side regions.
         Rectangle {
             horizontal-stretch: 1;
             background: transparent;
 
-            HorizontalLayout {
-                alignment: center;
-
-                Text {
-                    text: root.url;
-                    color: #92959C;
-                    font-size: 10px;
-                    overflow: elide;
-                    vertical-alignment: center;
-                }
+            Text {
+                x: 0px;
+                y: 0px;
+                width: 100%;
+                height: 30px;
+                text: root.url;
+                color: #92959C;
+                font-size: 10px;
+                overflow: elide;
+                horizontal-alignment: center;
+                vertical-alignment: center;
             }
         }
     }
 
-    // Right: Copy URL button, independent of the main row.
+    // Fixed to the far-right edge of the row.
     HorizontalLayout {
-        alignment: end;
-        spacing: 0px;
+        x: parent.width - 150px;
+        y: 2px;
+        width: 150px;
+        height: 25px;
+        spacing: 6px;
+
+        Rectangle {
+            width: 62px;
+            background: transparent;
+
+            Text {
+                text: root.copy-status;
+                color: root.copy-status == "Copied URL"
+                    ? #0077C2
+                    : #E07A7A;
+                font-size: 9px;
+                horizontal-alignment: right;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+        }
 
         TouchArea {
             width: 82px;

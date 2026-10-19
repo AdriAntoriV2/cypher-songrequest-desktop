@@ -1,0 +1,71 @@
+
+export component VideoWindow inherits Window {
+    in property <string> current-track: "Nothing playing";
+    in property <string> current-artist: "";
+
+    title: "Song Request - Video";
+    width: 640px;
+    height: 400px;
+    background: #101114;
+
+    VerticalLayout {
+        padding: 8px;
+        spacing: 8px;
+
+        Rectangle {
+            background: #08090B;
+            border-width: 1px;
+            border-color: #303238;
+            border-radius: 3px;
+            vertical-stretch: 1;
+
+            VerticalLayout {
+                alignment: center;
+                spacing: 8px;
+
+                Text {
+                    text: "VIDEO PREVIEW";
+                    color: #0077C2;
+                    font-size: 11px;
+                    font-weight: 700;
+                    horizontal-alignment: center;
+                }
+
+                Text {
+                    text: "Video playback will appear here";
+                    color: #777A83;
+                    font-size: 12px;
+                    horizontal-alignment: center;
+                }
+            }
+        }
+
+        Rectangle {
+            height: 48px;
+            background: #191B1E;
+            border-width: 1px;
+            border-color: #303238;
+            border-radius: 3px;
+
+            VerticalLayout {
+                padding: 7px;
+                spacing: 3px;
+
+                Text {
+                    text: root.current-track;
+                    color: #F0F0F2;
+                    font-size: 12px;
+                    font-weight: 600;
+                    overflow: elide;
+                }
+
+                Text {
+                    text: root.current-artist;
+                    color: #92959C;
+                    font-size: 10px;
+                    overflow: elide;
+                }
+            }
+        }
+    }
+}

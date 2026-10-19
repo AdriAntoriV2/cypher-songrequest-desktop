@@ -20,14 +20,15 @@ export component MainWindow inherits Window {
     in-out property <bool> connected: false;
     in-out property <string> current-track: "Nothing playing";
     in-out property <string> current-artist: "Request a song to start playback";
-    in-out property <string> queue-count-label: "0 / 10";
     in-out property <[string]> queue-items: [];
     in-out property <int> selected-queue-index: -1;
     in-out property <bool> overlays-expanded: false;
+    in-out property <bool> video-visible: false;
     in-out property <string> copy-status: "";
 
     callback connection-toggle-requested();
     callback skip-requested();
+    callback video-visibility-changed(bool);
     callback minimize-requested();
     callback close-window-requested();
     callback open-creator-link();
@@ -58,10 +59,44 @@ export component MainWindow inherits Window {
         NowPlaying {
             current-track: root.current-track;
             current-artist: root.current-artist;
-            queue-count-label: root.queue-count-label;
+            video-visible: root.video-visible;
 
             skip-requested => {
                 root.skip-requested();
+            }
+
+            video-toggle-requested => {
+                root.video-visible = !root.video-visible;
+                root.video-visibility-changed(root.video-visible);
+            }
+        }
+
+        if root.video-visible: Rectangle {
+            width: 100%;
+            height: parent.width * 9 / 16;
+            background: #08090B;
+            border-width: 1px;
+            border-color: #303238;
+            border-radius: 4px;
+
+            VerticalLayout {
+                alignment: center;
+                spacing: 8px;
+
+                Text {
+                    text: "VIDEO PREVIEW";
+                    color: #0077C2;
+                    font-size: 11px;
+                    font-weight: 700;
+                    horizontal-alignment: center;
+                }
+
+                Text {
+                    text: "Video playback will appear here";
+                    color: #777A83;
+                    font-size: 12px;
+                    horizontal-alignment: center;
+                }
             }
         }
 
@@ -82,12 +117,6 @@ export component MainWindow inherits Window {
                 height: 1px;
                 horizontal-stretch: 1;
             }
-
-            Text {
-                text: root.queue-count-label;
-                color: #858891;
-                font-size: 11px;
-            }
         }
 
         Playlist {
@@ -105,7 +134,7 @@ export component MainWindow inherits Window {
             copy-status <=> root.copy-status;
 
             copy-overlay-url(url) => {
-                root.copy-overlay-url(url)
+                root.copy-overlay-url(url);
             }
         }
 
