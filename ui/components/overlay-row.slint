@@ -4,11 +4,35 @@ export component OverlayRow inherits Rectangle {
     in property <string> url: "";
     in property <string> copy-status: "";
 
+    // Internal state for the temporary feedback.
+    property <bool> status-visible: false;
+
     callback copy-requested(string);
 
     background: transparent;
     width: 100%;
     height: 30px;
+
+    // Automatically hide the feedback after a short delay.
+    status-timer := Timer {
+        interval: 1800ms;
+        running: false;
+
+        triggered() => {
+            root.status-visible = false;
+        }
+    }
+
+    // Restart the timer whenever the status changes.
+    changed copy-status => {
+        if (root.copy-status != "") {
+            root.status-visible = true;
+            status-timer.restart();
+        } else {
+            root.status-visible = false;
+            status-timer.stop();
+        }
+    }
 
     // Name and URL use the row's available space.
     HorizontalLayout {
@@ -53,7 +77,7 @@ export component OverlayRow inherits Rectangle {
         }
     }
 
-    // Fixed to the far-right edge of the row.
+    // Fixed to the far-right edge. The button never moves.
     HorizontalLayout {
         x: parent.width - 150px;
         y: 2px;
@@ -64,6 +88,12 @@ export component OverlayRow inherits Rectangle {
         Rectangle {
             width: 62px;
             background: transparent;
+            opacity: root.status-visible ? 1.0 : 0.0;
+
+            animate opacity {
+                duration: 180ms;
+                easing: ease-out;
+            }
 
             Text {
                 text: root.copy-status;

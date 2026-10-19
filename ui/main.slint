@@ -1,4 +1,5 @@
 
+import { ScrollView } from "std-widgets.slint";
 import { TitleBar } from "components/title-bar.slint";
 import { NowPlaying } from "components/now-playing.slint";
 import { Playlist } from "components/playlist.slint";
@@ -39,6 +40,7 @@ export component MainWindow inherits Window {
         padding: 9px;
         spacing: 8px;
 
+        // Keep the title bar fixed while the content scrolls.
         TitleBar {
             username: root.username;
             connected: root.connected;
@@ -46,101 +48,122 @@ export component MainWindow inherits Window {
             connection-toggle-requested => {
                 root.connection-toggle-requested();
             }
-
             minimize-requested => {
                 root.minimize-requested();
             }
-
             close-window-requested => {
                 root.close-window-requested();
             }
         }
 
-        NowPlaying {
-            current-track: root.current-track;
-            current-artist: root.current-artist;
-            video-visible: root.video-visible;
-
-            skip-requested => {
-                root.skip-requested();
-            }
-
-            video-toggle-requested => {
-                root.video-visible = !root.video-visible;
-                root.video-visibility-changed(root.video-visible);
-            }
-        }
-
-        if root.video-visible: Rectangle {
-            width: 100%;
-            height: parent.width * 9 / 16;
-            background: #08090B;
-            border-width: 1px;
-            border-color: #303238;
-            border-radius: 4px;
+        ScrollView {
+            vertical-stretch: 1;
+            horizontal-scrollbar-policy: always-off;
+            vertical-scrollbar-policy: as-needed;
 
             VerticalLayout {
-                alignment: center;
+                width: 100%;
                 spacing: 8px;
 
-                Text {
-                    text: "VIDEO PREVIEW";
-                    color: #0077C2;
-                    font-size: 11px;
-                    font-weight: 700;
-                    horizontal-alignment: center;
+                NowPlaying {
+                    height: 124px;
+                    vertical-stretch: 0;
+
+                    current-track: root.current-track;
+                    current-artist: root.current-artist;
+                    video-visible: root.video-visible;
+
+                    skip-requested => {
+                        root.skip-requested();
+                    }
+
+                    video-toggle-requested => {
+                        root.video-visible = !root.video-visible;
+                        root.video-visibility-changed(root.video-visible);
+                    }
                 }
 
-                Text {
-                    text: "Video playback will appear here";
-                    color: #777A83;
-                    font-size: 12px;
-                    horizontal-alignment: center;
+                // Preserve the existing preview animation.
+                Rectangle {
+                    width: 100%;
+                    height: root.video-visible ? parent.width * 9 / 16 : 0px;
+                    clip: true;
+                    background: #08090B;
+                    border-width: 1px;
+                    border-color: root.video-visible ? #303238 : transparent;
+                    border-radius: 4px;
+
+                    animate height {
+                        duration: 180ms;
+                        easing: linear;
+                    }
+
+                    VerticalLayout {
+                        alignment: center;
+                        spacing: 8px;
+
+                        Text {
+                            text: "VIDEO PREVIEW";
+                            color: #0077C2;
+                            font-size: 11px;
+                            font-weight: 700;
+                            horizontal-alignment: center;
+                        }
+
+                        Text {
+                            text: "Video playback will appear here";
+                            color: #777A83;
+                            font-size: 12px;
+                            horizontal-alignment: center;
+                        }
+                    }
                 }
-            }
-        }
 
-        HorizontalLayout {
-            height: 18px;
-            spacing: 8px;
-            alignment: center;
+                HorizontalLayout {
+                    height: 18px;
+                    spacing: 8px;
+                    alignment: center;
 
-            Text {
-                text: "PLAYLIST";
-                color: #E3E4E7;
-                font-size: 11px;
-                font-weight: 700;
-            }
+                    Text {
+                        text: "PLAYLIST";
+                        color: #E3E4E7;
+                        font-size: 11px;
+                        font-weight: 700;
+                    }
 
-            Rectangle {
-                background: #303238;
-                height: 1px;
-                horizontal-stretch: 1;
-            }
-        }
+                    Rectangle {
+                        background: #303238;
+                        height: 1px;
+                        horizontal-stretch: 1;
+                    }
+                }
 
-        Playlist {
-            queue-items: root.queue-items;
-            selected-queue-index <=> root.selected-queue-index;
-            vertical-stretch: 1;
+                // Keep a useful playlist viewport while allowing
+                // the overall content to scroll.
+                Playlist {
+                    height: 180px;
+                    queue-items: root.queue-items;
+                    selected-queue-index <=> root.selected-queue-index;
 
-            queue-item-selected(index) => {
-                root.queue-item-selected(index);
-            }
-        }
+                    queue-item-selected(index) => {
+                        root.queue-item-selected(index);
+                    }
+                }
 
-        OverlaySection {
-            expanded <=> root.overlays-expanded;
-            copy-status <=> root.copy-status;
+                OverlaySection {
+                    expanded <=> root.overlays-expanded;
+                    copy-status <=> root.copy-status;
 
-            copy-overlay-url(url) => {
-                root.copy-overlay-url(url);
-            }
-        }
+                    copy-overlay-url(url) => {
+                        root.copy-overlay-url(url);
+                    }
+                }
 
-        Footer {
-            open-creator-link => {
-                root.open-creator-link();
+                Footer {
+                    open-creator-link => {
+                        root.open-creator-link();
+                    }
+                }
             }
         }
     }
