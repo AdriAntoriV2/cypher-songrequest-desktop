@@ -1,0 +1,86 @@
+
+import { ScrollView } from "std-widgets.slint";
+
+export component Playlist inherits Rectangle {
+    in property <[string]> queue-items: [];
+    in-out property <int> selected-queue-index: -1;
+
+    callback queue-item-selected(int);
+
+    background: #151619;
+    border-width: 1px;
+    border-color: #292B30;
+    border-radius: 3px;
+    clip: true;
+
+    if root.queue-items.length == 0 : VerticalLayout {
+        alignment: center;
+        spacing: 5px;
+
+        Text {
+            text: "Playlist is empty";
+            color: #C8C9CE;
+            font-size: 13px;
+            horizontal-alignment: center;
+        }
+
+        Text {
+            text: "Song requests will appear here";
+            color: #777A83;
+            font-size: 11px;
+            horizontal-alignment: center;
+        }
+    }
+
+    if root.queue-items.length > 0 : ScrollView {
+        viewport-width: self.width;
+        viewport-height: self.height;
+
+        VerticalLayout {
+            padding: 5px;
+            spacing: 3px;
+
+            for song[index] in root.queue-items : TouchArea {
+                height: 42px;
+                width: 100%;
+
+                Rectangle {
+                    background: root.selected-queue-index == index
+                        ? #102A3A
+                        : #151619;
+                    border-radius: 3px;
+
+                    HorizontalLayout {
+                        padding: 8px;
+                        spacing: 9px;
+                        alignment: center;
+
+                        Text {
+                            text: (index + 1) < 10
+                                ? "0" + (index + 1)
+                                : "" + (index + 1);
+                            color: root.selected-queue-index == index
+                                ? #0077C2
+                                : #777A83;
+                            font-size: 11px;
+                        }
+
+                        Text {
+                            text: song;
+                            color: #F0F0F2;
+                            font-size: 12px;
+                            overflow: elide;
+                            vertical-alignment: center;
+                            horizontal-stretch: 1;
+                        }
+                    }
+                }
+
+                clicked => {
+                    root.selected-queue-index = index;
+                    root.queue-item-selected(index);
+                }
+            }
+        }
+    }
+}

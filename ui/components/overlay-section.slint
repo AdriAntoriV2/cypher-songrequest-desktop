@@ -1,0 +1,112 @@
+
+import { OverlayRow } from "overlay-row.slint";
+
+export component OverlaySection inherits Rectangle {
+    in-out property <bool> expanded: false;
+    in-out property <string> copy-status: "";
+
+    callback copy-overlay-url(string) -> bool;
+
+    background: #191B1E;
+    border-width: 1px;
+    border-color: #292B30;
+    border-radius: 3px;
+
+    VerticalLayout {
+        padding: 7px;
+        spacing: 7px;
+
+        TouchArea {
+            height: 24px;
+            width: 100%;
+
+            HorizontalLayout {
+                spacing: 7px;
+                alignment: center;
+
+                Text {
+                    text: root.expanded ? "⌄" : "›";
+                    color: #0077C2;
+                    font-size: 16px;
+                }
+
+                Text {
+                    text: "OBS Overlays";
+                    color: #E3E4E7;
+                    font-size: 12px;
+                    font-weight: 600;
+                }
+
+                Rectangle {
+                    background: transparent;
+                    horizontal-stretch: 1;
+                }
+
+                Text {
+                    text: "3 sources";
+                    color: #858891;
+                    font-size: 10px;
+                }
+            }
+
+            clicked => {
+                root.expanded = !root.expanded;
+                root.copy-status = "";
+            }
+        }
+
+        if root.expanded : VerticalLayout {
+            spacing: 6px;
+
+            Rectangle {
+                height: 1px;
+                background: #303238;
+            }
+
+            OverlayRow {
+                label: "Queue";
+                url: "http://127.0.0.1:8765/queue.html";
+
+                copy-requested(url) => {
+                    if root.copy-overlay-url(url) {
+                        root.copy-status = "Copied URL";
+                    } else {
+                        root.copy-status = "Copy failed";
+                    }
+                }
+            }
+
+            OverlayRow {
+                label: "Played Now";
+                url: "http://127.0.0.1:8765/played-now.html";
+
+                copy-requested(url) => {
+                    if root.copy-overlay-url(url) {
+                        root.copy-status = "Copied URL";
+                    } else {
+                        root.copy-status = "Copy failed";
+                    }
+                }
+            }
+
+            OverlayRow {
+                label: "Player";
+                url: "http://127.0.0.1:8765/player.html";
+
+                copy-requested(url) => {
+                    if root.copy-overlay-url(url) {
+                        root.copy-status = "Copied URL";
+                    } else {
+                        root.copy-status = "Copy failed";
+                    }
+                }
+            }
+
+            Text {
+                text: root.copy-status;
+                color: #0077C2;
+                font-size: 10px;
+            }
+        }
+    }
+}

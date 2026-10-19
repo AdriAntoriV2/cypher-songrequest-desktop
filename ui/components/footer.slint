@@ -1,0 +1,39 @@
+
+export component Footer inherits Rectangle {
+    callback open-creator-link();
+
+    background: transparent;
+    height: 16px;
+
+    HorizontalLayout {
+        alignment: center;
+        spacing: 4px;
+
+        Text {
+            text: "Made by Cypherusuh__";
+            color: #656871;
+            font-size: 10px;
+        }
+
+        Text {
+            text: "|";
+            color: #656871;
+            font-size: 10px;
+        }
+
+        TouchArea {
+            width: 132px;
+            height: 16px;
+
+            Text {
+                text: "twitch.tv/cypherusuh__";
+                color: #858891;
+                font-size: 10px;
+            }
+
+            clicked => {
+                root.open-creator-link();
+            }
+        }
+    }
+}

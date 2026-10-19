@@ -1,0 +1,118 @@
+
+import { TitleBar } from "components/title-bar.slint";
+import { NowPlaying } from "components/now-playing.slint";
+import { Playlist } from "components/playlist.slint";
+import { OverlaySection } from "components/overlay-section.slint";
+import { Footer } from "components/footer.slint";
+
+export component MainWindow inherits Window {
+    title: "Cypher's Song Request";
+    no-frame: true;
+    resize-border-width: 6px;
+
+    preferred-width: 820px;
+    preferred-height: 560px;
+    min-width: 640px;
+    min-height: 420px;
+    background: #101114;
+
+    in-out property <string> username: "Username";
+    in-out property <bool> connected: false;
+    in-out property <string> current-track: "Nothing playing";
+    in-out property <string> current-artist: "Request a song to start playback";
+    in-out property <string> queue-count-label: "0 / 10";
+    in-out property <[string]> queue-items: [];
+    in-out property <int> selected-queue-index: -1;
+    in-out property <bool> overlays-expanded: false;
+    in-out property <string> copy-status: "";
+
+    callback connection-toggle-requested();
+    callback skip-requested();
+    callback minimize-requested();
+    callback close-window-requested();
+    callback open-creator-link();
+    callback copy-overlay-url(string) -> bool;
+    callback queue-item-selected(int);
+
+    VerticalLayout {
+        padding: 9px;
+        spacing: 8px;
+
+        TitleBar {
+            username: root.username;
+            connected: root.connected;
+
+            connection-toggle-requested => {
+                root.connection-toggle-requested();
+            }
+
+            minimize-requested => {
+                root.minimize-requested();
+            }
+
+            close-window-requested => {
+                root.close-window-requested();
+            }
+        }
+
+        NowPlaying {
+            current-track: root.current-track;
+            current-artist: root.current-artist;
+            queue-count-label: root.queue-count-label;
+
+            skip-requested => {
+                root.skip-requested();
+            }
+        }
+
+        HorizontalLayout {
+            height: 18px;
+            spacing: 8px;
+            alignment: center;
+
+            Text {
+                text: "PLAYLIST";
+                color: #E3E4E7;
+                font-size: 11px;
+                font-weight: 700;
+            }
+
+            Rectangle {
+                background: #303238;
+                height: 1px;
+                horizontal-stretch: 1;
+            }
+
+            Text {
+                text: root.queue-count-label;
+                color: #858891;
+                font-size: 11px;
+            }
+        }
+
+        Playlist {
+            queue-items: root.queue-items;
+            selected-queue-index <=> root.selected-queue-index;
+            vertical-stretch: 1;
+
+            queue-item-selected(index) => {
+                root.queue-item-selected(index);
+            }
+        }
+
+        OverlaySection {
+            expanded <=> root.overlays-expanded;
+            copy-status <=> root.copy-status;
+
+            copy-overlay-url(url) => {
+                root.copy-overlay-url(url)
+            }
+        }
+
+        Footer {
+            open-creator-link => {
+                root.open-creator-link();
+            }
+        }
+    }
+}

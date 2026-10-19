@@ -1,0 +1,45 @@
+
+export component OverlayRow inherits Rectangle {
+    in property <string> label: "";
+    in property <string> url: "";
+
+    callback copy-requested(string);
+
+    background: transparent;
+    height: 28px;
+
+    HorizontalLayout {
+        spacing: 8px;
+        alignment: center;
+
+        Text {
+            text: root.label;
+            color: #C8C9CE;
+            font-size: 11px;
+            horizontal-stretch: 1;
+            vertical-alignment: center;
+        }
+
+        TouchArea {
+            width: 82px;
+            height: 25px;
+
+            Rectangle {
+                background: #292B30;
+                border-radius: 3px;
+
+                Text {
+                    text: "Copy URL";
+                    color: #F0F0F2;
+                    font-size: 10px;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+            }
+
+            clicked => {
+                root.copy-requested(root.url);
+            }
+        }
+    }
+}
