@@ -1,6 +1,5 @@
-
 use reqwest::blocking::Client;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::fs::OpenOptions;
 use std::io::{BufRead, BufReader, Write};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -8,7 +7,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
-const TELEMETRY_INTERVAL: Duration = Duration::from_millis(250);
+const TELEMETRY_INTERVAL: Duration = Duration::from_millis(500);
 const HTTP_TIMEOUT: Duration = Duration::from_secs(2);
 
 #[derive(Debug, Default, Clone)]
@@ -19,11 +18,14 @@ struct ObservedPlayback {
     paused: Option<bool>,
 }
 
+struct HttpJsonResponse {
+    status: u16,
+    body: Value,
+}
+
 impl ObservedPlayback {
     fn is_ready(&self) -> bool {
-        self.position.is_some()
-            && self.volume.is_some()
-            && self.paused.is_some()
+        self.position.is_some() && self.volume.is_some() && self.paused.is_some()
     }
 
     fn telemetry_payload(&self, request_id: &str) -> Option<Value> {
@@ -50,9 +52,6 @@ impl ObservedPlayback {
 
 /// Start one IPC reader and one throttled telemetry reporter for this mpv
 /// instance.
-///
-/// The IPC observer owns the connection used to receive mpv property events.
-/// The telemetry reporter periodically publishes the latest observed state.
 ///
 /// The generation token invalidates both workers when mpv stops or is replaced.
 pub(super) fn start_observers(
@@ -106,15 +105,29 @@ fn run_ipc_observer(
     observed: Arc<Mutex<ObservedPlayback>>,
     telemetry_post_lock: Arc<Mutex<()>>,
 ) {
-    let pipe = match OpenOptions::new()
-        .read(true)
-        .write(true)
-        .open(&pipe_name)
-    {
-        Ok(pipe) => pipe,
-        Err(error) => {
-            eprintln!("[Video] IPC observer could not connect: {error}");
+    // Retry briefly if another connection currently occupies the mpv pipe.
+    let deadline = std::time::Instant::now() + Duration::from_secs(3);
+
+    let pipe = loop {
+        if generation_source.load(Ordering::SeqCst) != generation {
+            println!("[Video] IPC observer cancelled before connecting: request_id={request_id}");
             return;
+        }
+
+        match OpenOptions::new().read(true).write(true).open(&pipe_name) {
+            Ok(pipe) => break pipe,
+            Err(error)
+                if error.raw_os_error() == Some(231) && std::time::Instant::now() < deadline =>
+            {
+                thread::sleep(Duration::from_millis(50));
+            }
+            Err(error) => {
+                eprintln!(
+                    "[Video] IPC observer could not connect for request \
+                     {request_id}: {error}"
+                );
+                return;
+            }
         }
     };
 
@@ -133,17 +146,23 @@ fn run_ipc_observer(
         message.push('\n');
 
         if let Err(error) = pipe.write_all(message.as_bytes()) {
-            eprintln!("[Video] Failed to subscribe to mpv properties: {error}");
+            eprintln!(
+                "[Video] Failed to subscribe to mpv properties for \
+                 request {request_id}: {error}"
+            );
             return;
         }
     }
 
     if let Err(error) = pipe.flush() {
-        eprintln!("[Video] Failed to flush mpv IPC subscriptions: {error}");
+        eprintln!(
+            "[Video] Failed to flush mpv IPC subscriptions for \
+             request {request_id}: {error}"
+        );
         return;
     }
 
-    println!("[Video] mpv playback observer started.");
+    println!("[Video] mpv playback observer started: request_id={request_id}");
 
     let mut reader = BufReader::new(pipe);
     let mut line = String::new();
@@ -153,17 +172,24 @@ fn run_ipc_observer(
 
     loop {
         if generation_source.load(Ordering::SeqCst) != generation {
+            println!("[Video] Observer generation invalidated: request_id={request_id}");
             break;
         }
 
         line.clear();
 
         match reader.read_line(&mut line) {
-            Ok(0) => break,
+            Ok(0) => {
+                eprintln!("[Video] mpv IPC stream closed: request_id={request_id}");
+                break;
+            }
             Ok(_) => {}
             Err(error) => {
                 if generation_source.load(Ordering::SeqCst) == generation {
-                    eprintln!("[Video] mpv IPC observer read failed: {error}");
+                    eprintln!(
+                        "[Video] mpv IPC observer read failed for \
+                         request {request_id}: {error}"
+                    );
                 }
                 break;
             }
@@ -175,18 +201,38 @@ fn run_ipc_observer(
 
         let message: Value = match serde_json::from_str(line.trim()) {
             Ok(message) => message,
-            Err(_) => continue,
+            Err(error) => {
+                eprintln!(
+                    "[Video] Invalid mpv IPC JSON for request {request_id}: \
+                     {error}; line={}",
+                    line.trim()
+                );
+                continue;
+            }
         };
 
+        // mpv also sends command replies, which are not property events.
         if message["event"].as_str() != Some("property-change") {
             continue;
         }
 
         let Some(name) = message["name"].as_str() else {
+            eprintln!(
+                "[Video] Property event missing name: request_id={request_id}, \
+                 event={message}"
+            );
             continue;
         };
 
         let data = &message["data"];
+
+        // Log EOF events before any handler conditions can skip them.
+        if name == "eof-reached" {
+            println!(
+                "[Video] EOF property received: request_id={request_id}, \
+                 value={data}, ended_sent={ended_sent}"
+            );
+        }
 
         let Ok(mut state) = observed.lock() else {
             eprintln!("[Video] Playback observer state mutex poisoned.");
@@ -200,8 +246,6 @@ fn run_ipc_observer(
                         let previous_position = state.position;
                         state.position = Some(value);
 
-                        // Useful for tracing seek propagation without logging
-                        // every ordinary playback position update.
                         if let Some(previous) = previous_position {
                             if (value - previous).abs() >= 2.0 {
                                 println!(
@@ -236,7 +280,23 @@ fn run_ipc_observer(
                 }
             }
             "eof-reached" => {
-                if data.as_bool() == Some(true) && !ended_sent {
+                let eof_value = data.as_bool();
+
+                println!(
+                    "[Video] EOF property received: request_id={}, value={:?}, ended_sent={}",
+                    request_id, eof_value, ended_sent
+                );
+
+                let reached_duration = match (state.position, state.duration) {
+                    (Some(position), Some(duration)) if duration > 0.0 => {
+                        position >= duration - 0.5
+                    }
+                    _ => false,
+                };
+
+                let reached_eof = eof_value == Some(true) || (data.is_null() && reached_duration);
+
+                if reached_eof && !ended_sent {
                     ended_sent = true;
 
                     if let Some(duration) = state.duration {
@@ -247,24 +307,14 @@ fn run_ipc_observer(
 
                     state.paused = Some(true);
 
-                    println!(
-                        "[Video] End of track reached for request {request_id}."
-                    );
+                    println!("[Video] Track ended for request {request_id}; notifying backend.");
 
                     drop(state);
 
-                    /*
-                     * Serialize the final report with periodic telemetry.
-                     * The observer thread is the only writer to `observed`,
-                     * so it cannot process another property event while this
-                     * final report is being sent.
-                     */
                     let _post_guard = match telemetry_post_lock.lock() {
                         Ok(guard) => guard,
                         Err(error) => {
-                            eprintln!(
-                                "[Video] Telemetry post lock poisoned: {error}"
-                            );
+                            eprintln!("[Video] Telemetry post lock poisoned: {error}");
                             break;
                         }
                     };
@@ -276,22 +326,16 @@ fn run_ipc_observer(
                     let final_payload = match observed.lock() {
                         Ok(state) => state.telemetry_payload(&request_id),
                         Err(error) => {
-                            eprintln!(
-                                "[Video] Playback observer state mutex poisoned: {error}"
-                            );
+                            eprintln!("[Video] Playback observer state mutex poisoned: {error}");
                             break;
                         }
                     };
 
                     if let Some(payload) = final_payload {
-                        if let Err(error) = post_json(
-                            &api_base_url,
-                            "/api/player/telemetry",
-                            payload,
-                        ) {
-                            eprintln!(
-                                "[Video] Failed to report final playback state: {error}"
-                            );
+                        if let Err(error) =
+                            post_json(&api_base_url, "/api/player/telemetry", payload)
+                        {
+                            eprintln!("[Video] Failed to report final playback state: {error}");
                         }
                     }
 
@@ -302,21 +346,17 @@ fn run_ipc_observer(
                             json!({"requestId": request_id}),
                         ) {
                             Ok(response) => {
-                                if response["accepted"].as_bool() == Some(true) {
-                                    println!(
-                                        "[Video] Track completion accepted by backend."
-                                    );
+                                if response.body["accepted"].as_bool() == Some(true) {
+                                    println!("[Video] Track completion accepted by backend.");
                                 } else {
-                                    println!(
-                                        "[Video] Track completion was stale \
-                                         or already handled."
+                                    eprintln!(
+                                        "[Video] Backend did not accept track completion: {:?}",
+                                        response.body
                                     );
                                 }
                             }
                             Err(error) => {
-                                eprintln!(
-                                    "[Video] Failed to notify track completion: {error}"
-                                );
+                                eprintln!("[Video] Failed to notify track completion: {error}");
                             }
                         }
                     }
@@ -328,7 +368,7 @@ fn run_ipc_observer(
         }
     }
 
-    println!("[Video] mpv playback observer stopped.");
+    println!("[Video] mpv playback observer stopped: request_id={request_id}");
 }
 
 fn run_telemetry_reporter(
@@ -339,10 +379,7 @@ fn run_telemetry_reporter(
     observed: Arc<Mutex<ObservedPlayback>>,
     telemetry_post_lock: Arc<Mutex<()>>,
 ) {
-    let client = match Client::builder()
-        .timeout(HTTP_TIMEOUT)
-        .build()
-    {
+    let client = match Client::builder().timeout(HTTP_TIMEOUT).build() {
         Ok(client) => client,
         Err(error) => {
             eprintln!("[Video] Failed to create telemetry HTTP client: {error}");
@@ -372,14 +409,20 @@ fn run_telemetry_reporter(
         };
 
         if let Some(payload) = payload {
-            if let Err(error) = post_json_with_client(
-                &client,
-                &api_base_url,
-                "/api/player/telemetry",
-                payload,
-            ) {
-                if generation_source.load(Ordering::SeqCst) == generation {
-                    eprintln!("[Video] Playback telemetry failed: {error}");
+            let position = payload["position"].as_f64().unwrap_or(-1.0);
+
+            match post_json_with_client(&client, &api_base_url, "/api/player/telemetry", payload) {
+                Ok(response) => {
+                    if response.body["accepted"].as_bool() != Some(true) {
+                        eprintln!(
+                            "[Video] Backend rejected telemetry at {:.2}s: \
+                             HTTP {}, body={}",
+                            position, response.status, response.body
+                        );
+                    }
+                }
+                Err(error) => {
+                    eprintln!("[Video] Telemetry POST failed at {:.2}s: {error}", position);
                 }
             }
         }
@@ -387,17 +430,15 @@ fn run_telemetry_reporter(
         drop(_post_guard);
         thread::sleep(TELEMETRY_INTERVAL);
     }
+
+    println!("[Video] Telemetry reporter stopped: request_id={request_id}");
 }
 
-fn post_json(
-    api_base_url: &str,
-    path: &str,
-    payload: Value,
-) -> Result<Value, String> {
+fn post_json(api_base_url: &str, path: &str, payload: Value) -> Result<HttpJsonResponse, String> {
     let client = Client::builder()
         .timeout(HTTP_TIMEOUT)
         .build()
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| format!("Failed to create HTTP client: {error}"))?;
 
     post_json_with_client(&client, api_base_url, path, payload)
 }
@@ -407,23 +448,40 @@ fn post_json_with_client(
     api_base_url: &str,
     path: &str,
     payload: Value,
-) -> Result<Value, String> {
-    let url = format!(
-        "{}{}",
-        api_base_url.trim_end_matches('/'),
-        path
-    );
+) -> Result<HttpJsonResponse, String> {
+    let url = format!("{}{}", api_base_url.trim_end_matches('/'), path);
 
     let response = client
-        .post(url)
+        .post(&url)
         .header("Content-Type", "application/json")
         .body(payload.to_string())
         .send()
-        .map_err(|error| error.to_string())?
-        .error_for_status()
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| format!("POST {url} failed: {error}"))?;
 
-    response
-        .json::<Value>()
-        .map_err(|error| error.to_string())
+    let status = response.status();
+    let status_code = status.as_u16();
+
+    // Read the body before checking HTTP success so error responses include
+    // their actual status and response body in the diagnostic message.
+    let body_text = response
+        .text()
+        .map_err(|error| format!("POST {url}: HTTP {status_code}, failed to read body: {error}"))?;
+
+    if !status.is_success() {
+        return Err(format!(
+            "POST {url} returned HTTP {status_code}: {body_text}"
+        ));
+    }
+
+    let body: Value = serde_json::from_str(&body_text).map_err(|error| {
+        format!(
+            "POST {url} returned HTTP {status_code}, but its body was not valid JSON: \
+             {error}; body={body_text}"
+        )
+    })?;
+
+    Ok(HttpJsonResponse {
+        status: status_code,
+        body,
+    })
 }

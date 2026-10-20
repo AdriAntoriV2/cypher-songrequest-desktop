@@ -143,8 +143,15 @@ pub fn start_polling(
                         sync.playback = snapshot.playback.clone();
                         sync.control = snapshot.control.clone();
                     }
+                    
 
+                    let request_id = snapshot.current_request_id.clone();
+                    let media_url = snapshot.current_media_url.clone();
+                    // println!(
+                    //     "[Backend] Snapshot: request_id={request_id:?}, media_url={media_url}"
+                    // );
                     on_snapshot(snapshot);
+
                 }
                 Err(error) => {
                     eprintln!("[Backend] API request failed: {error}");

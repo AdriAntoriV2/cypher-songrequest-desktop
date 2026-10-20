@@ -11,6 +11,15 @@ export component PlayerControl inherits Rectangle {
     callback volume-requested(float);
     callback playback-toggle-requested();
 
+    private property <float> seek-position: root.position;
+    private property <bool> seek-dragging: false;
+
+    changed position => {
+        if (!root.seek-dragging) {
+            root.seek-position = root.position;
+        }
+    }
+
     width: 100%;
     height: 112px;
 
@@ -54,10 +63,17 @@ export component PlayerControl inherits Rectangle {
                 enabled: root.enabled && root.duration > 0;
                 minimum: 0;
                 maximum: max(1, root.duration);
-                value: min(max(0, root.position), max(1, root.duration));
+                value: root.seek-position;
 
-                changed value => {
-                    root.seek-requested(self.value);
+                changed(value) => {
+                    root.seek-dragging = true;
+                    root.seek-position = value;
+                }
+
+                released(value) => {
+                    root.seek-position = value;
+                    root.seek-requested(value);
+                    root.seek-dragging = false;
                 }
             }
 
@@ -113,7 +129,7 @@ export component PlayerControl inherits Rectangle {
         maximum: 1;
         value: min(1, max(0, root.volume));
 
-        changed value => {
+        changed => {
             root.volume-requested(self.value);
         }
     }

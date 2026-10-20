@@ -137,6 +137,14 @@ impl VideoPreviewController {
             false
         };
 
+        // println!(
+        //     "[Video] Sync: current_request_id={:?}, incoming_request_id={:?}, current_url={}, incoming_url={}",
+        //     self.current_request_id,
+        //     request_id,
+        //     self.current_url,
+        //     url
+        // );
+
         if player_exited {
             self.stop_player();
             self.current_url.clear();
