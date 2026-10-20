@@ -11,27 +11,37 @@ export component PlayerControl inherits Rectangle {
     callback volume-requested(float);
     callback playback-toggle-requested();
 
-in property <string> track-key: "";
+    in property <string> track-key: "";
 
-private property <float> seek-position: root.position;
-private property <bool> seek-dragging: false;
+    private property <float> seek-position: root.position;
+    private property <bool> seek-dragging: false;
+    private property <bool> seek-pending: false;
+    private property <float> pending-seek-position: 0;
 
-changed position => {
-    if (!root.seek-dragging) {
-        root.seek-position = root.position;
+    changed position => {
+        if (root.seek-pending) {
+            // Ignore stale playback positions until the seek takes effect.
+            if (root.position >= root.pending-seek-position - 1.5
+                && root.position <= root.pending-seek-position + 1.5) {
+                root.seek-pending = false;
+                root.seek-position = root.position;
+            }
+        } else if (!root.seek-dragging) {
+            root.seek-position = root.position;
+        }
     }
-}
 
-changed track-key => {
-    root.seek-dragging = false;
-    root.seek-position = 0;
-}
-
-changed duration => {
-    if (!root.seek-dragging) {
-        root.seek-position = root.position;
+    changed track-key => {
+        root.seek-dragging = false;
+        root.seek-pending = false;
+        root.seek-position = 0;
     }
-}
+
+    changed duration => {
+        if (!root.seek-dragging && !root.seek-pending) {
+            root.seek-position = root.position;
+        }
+    }
 
     width: 100%;
     height: 112px;
@@ -69,27 +79,28 @@ changed duration => {
                 }
             }
 
-Slider {
-    width: parent.width - 160px;
-    height: 32px;
+            Slider {
+                width: parent.width - 160px;
+                height: 32px;
 
-    enabled: root.enabled && root.duration > 0;
-    minimum: 0;
-    maximum: max(1, root.duration);
+                enabled: root.enabled && root.duration > 0;
+                minimum: 0;
+                maximum: max(1, root.duration);
 
-    // Two-way binding: the slider and local seek state stay synchronized.
-    value <=> root.seek-position;
+                value <=> root.seek-position;
 
-    changed(value) => {
-        root.seek-dragging = true;
-    }
+                changed(value) => {
+                    root.seek-dragging = true;
+                }
 
-    released(value) => {
-        root.seek-position = value;
-        root.seek-requested(value);
-        root.seek-dragging = false;
-    }
-}
+                released(value) => {
+                    root.seek-position = value;
+                    root.pending-seek-position = value;
+                    root.seek-pending = true;
+                    root.seek-requested(value);
+                    root.seek-dragging = false;
+                }
+            }
 
             Rectangle {
                 width: 56px;
@@ -110,50 +121,50 @@ Slider {
 
         // Row 2: Play/pause and volume
         HorizontalLayout {
-    width: 100%;
-    height: 32px;
-    spacing: 12px;
+            width: 100%;
+            height: 32px;
+            spacing: 12px;
 
-    Button {
-        width: 40px;
-        height: 32px;
-        text: root.paused ? "▶" : "Ⅱ";
-        enabled: root.enabled;
+            Button {
+                width: 40px;
+                height: 32px;
+                text: root.paused ? "▶" : "Ⅱ";
+                enabled: root.enabled;
 
-        clicked => {
-            root.playback-toggle-requested();
-        }
-    }
+                clicked => {
+                    root.playback-toggle-requested();
+                }
+            }
 
-    Text {
-        width: 48px;
-        height: 32px;
-        text: "Volume";
-        color: #E3E6ED;
-        font-size: 13px;
-        vertical-alignment: center;
-    }
+            Text {
+                width: 48px;
+                height: 32px;
+                text: "Volume";
+                color: #E3E6ED;
+                font-size: 13px;
+                vertical-alignment: center;
+            }
 
-    Slider {
-        width: 180px;
-        height: 32px;
+            Slider {
+                width: 180px;
+                height: 32px;
 
-        enabled: root.enabled;
-        minimum: 0;
-        maximum: 1;
-        value: min(1, max(0, root.volume));
+                enabled: root.enabled;
+                minimum: 0;
+                maximum: 1;
+                value: min(1, max(0, root.volume));
 
-        changed => {
-            root.volume-requested(self.value);
-        }
-    }
+                changed => {
+                    root.volume-requested(self.value);
+                }
+            }
 
-    // Keeps the controls grouped on the left.
+            // Keeps the controls grouped on the left.
     Rectangle {
-        horizontal-stretch: 1;
-        background: transparent;
-    }
-}
+                horizontal-stretch: 1;
+                background: transparent;
+            }
+        }
     }
 
     function format-time(seconds: float) -> string {
