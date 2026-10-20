@@ -5,6 +5,7 @@ import { NowPlaying } from "components/now-playing.slint";
 import { Playlist } from "components/playlist.slint";
 import { OverlaySection } from "components/overlay-section.slint";
 import { Footer } from "components/footer.slint";
+import { VideoPreview } from "components/video-preview.slint";
 
 export component MainWindow inherits Window {
     title: "Cypher's Song Request";
@@ -25,16 +26,29 @@ export component MainWindow inherits Window {
     in-out property <int> selected-queue-index: -1;
     in-out property <bool> overlays-expanded: false;
     in-out property <bool> video-visible: false;
+    in-out property <string> current-media-url: "";
     in-out property <string> copy-status: "";
+
+    out property <length> video-preview-x: video-preview.preview-x;
+    out property <length> video-preview-y: video-preview.preview-y;
+    out property <length> video-preview-width: video-preview.preview-width;
+    out property <length> video-preview-height: video-preview.preview-height;
 
     callback connection-toggle-requested();
     callback skip-requested();
     callback video-visibility-changed(bool);
+    callback video-source-changed(string);
     callback minimize-requested();
     callback close-window-requested();
     callback open-creator-link();
     callback copy-overlay-url(string) -> bool;
     callback queue-item-selected(int);
+
+    changed current-media-url => {
+        if (root.video-visible && root.current-media-url != "") {
+            root.video-source-changed(root.current-media-url);
+        }
+    }
 
     VerticalLayout {
         padding: 9px;
@@ -48,9 +62,11 @@ export component MainWindow inherits Window {
             connection-toggle-requested => {
                 root.connection-toggle-requested();
             }
+
             minimize-requested => {
                 root.minimize-requested();
             }
+
             close-window-requested => {
                 root.close-window-requested();
             }
@@ -80,42 +96,26 @@ export component MainWindow inherits Window {
                     video-toggle-requested => {
                         root.video-visible = !root.video-visible;
                         root.video-visibility-changed(root.video-visible);
+
+                        if (root.video-visible && root.current-media-url != "") {
+                            root.video-source-changed(root.current-media-url);
+                        }
                     }
                 }
 
-                // Preserve the existing preview animation.
-                Rectangle {
+                // Native video will be positioned over this component.
+                // It stays collapsed when the preview is hidden.
+                video-preview := VideoPreview {
                     width: 100%;
                     height: root.video-visible ? parent.width * 9 / 16 : 0px;
-                    clip: true;
-                    background: #08090B;
-                    border-width: 1px;
-                    border-color: root.video-visible ? #303238 : transparent;
-                    border-radius: 4px;
+                    video-visible: root.video-visible;
+                    has-video: root.current-media-url != "";
+                    current-track: root.current-track;
+                    current-artist: root.current-artist;
 
                     animate height {
                         duration: 180ms;
                         easing: linear;
-                    }
-
-                    VerticalLayout {
-                        alignment: center;
-                        spacing: 8px;
-
-                        Text {
-                            text: "VIDEO PREVIEW";
-                            color: #0077C2;
-                            font-size: 11px;
-                            font-weight: 700;
-                            horizontal-alignment: center;
-                        }
-
-                        Text {
-                            text: "Video playback will appear here";
-                            color: #777A83;
-                            font-size: 12px;
-                            horizontal-alignment: center;
-                        }
                     }
                 }
 

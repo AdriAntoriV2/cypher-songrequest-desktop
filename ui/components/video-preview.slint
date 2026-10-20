@@ -1,0 +1,47 @@
+export component VideoPreview inherits Rectangle {
+    in property <bool> video-visible: false;
+    in property <bool> has-video: false;
+    in property <string> current-track: "Nothing playing";
+    in property <string> current-artist: "Request a song to start playback";
+
+    out property <length> preview-x: root.absolute-position.x;
+    out property <length> preview-y: root.absolute-position.y;
+    out property <length> preview-width: root.width;
+    out property <length> preview-height: root.height;
+
+    background: #08090B;
+    border-width: 1px;
+    border-color: root.video-visible ? #303238 : transparent;
+    border-radius: 4px;
+    clip: true;
+
+    // Idle screen remains visible until native mpv has a track to show.
+    VerticalLayout {
+        visible: !root.has-video;
+        alignment: center;
+        spacing: 8px;
+
+        Text {
+            text: "VIDEO PREVIEW";
+            color: #0077C2;
+            font-size: 11px;
+            font-weight: 700;
+            horizontal-alignment: center;
+        }
+
+        Text {
+            text: "No song is playing";
+            color: #F0F0F2;
+            font-size: 13px;
+            font-weight: 600;
+            horizontal-alignment: center;
+        }
+
+        Text {
+            text: "Request a song to start playback";
+            color: #777A83;
+            font-size: 11px;
+            horizontal-alignment: center;
+        }
+    }
+}
