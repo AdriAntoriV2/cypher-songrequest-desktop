@@ -6,15 +6,16 @@ import { Playlist } from "components/playlist.slint";
 import { OverlaySection } from "components/overlay-section.slint";
 import { Footer } from "components/footer.slint";
 import { VideoPreview } from "components/video-preview.slint";
+import { PlayerControl } from "components/player-control.slint";
 
 export component MainWindow inherits Window {
     title: "Cypher's Song Request";
     no-frame: true;
     resize-border-width: 6px;
 
-    preferred-width: 820px;
-    preferred-height: 560px;
-    min-width: 640px;
+    preferred-width: 480px;
+    preferred-height: 700px;
+    min-width: 480px;
     min-height: 420px;
     background: #101114;
 
@@ -28,6 +29,16 @@ export component MainWindow inherits Window {
     in-out property <bool> video-visible: false;
     in-out property <string> current-media-url: "";
     in-out property <string> copy-status: "";
+
+    // Playback state reported by the backend from mpv.
+    in-out property <float> playback-position: 0;
+    in-out property <float> playback-duration: 0;
+    in-out property <float> playback-volume: 1;
+    in-out property <bool> playback-paused: true;
+
+    callback seek-requested(float);
+    callback volume-requested(float);
+    callback playback-toggle-requested();
 
     out property <length> video-preview-x: video-preview.preview-x;
     out property <length> video-preview-y: video-preview.preview-y;
@@ -51,11 +62,13 @@ export component MainWindow inherits Window {
     }
 
     VerticalLayout {
+        width: 100%;
+        height: 100%;
         padding: 9px;
         spacing: 8px;
 
-        // Keep the title bar fixed while the content scrolls.
         TitleBar {
+            width: 100%;
             username: root.username;
             connected: root.connected;
 
@@ -73,6 +86,7 @@ export component MainWindow inherits Window {
         }
 
         ScrollView {
+            width: 100%;
             vertical-stretch: 1;
             horizontal-scrollbar-policy: always-off;
             vertical-scrollbar-policy: as-needed;
@@ -82,6 +96,7 @@ export component MainWindow inherits Window {
                 spacing: 8px;
 
                 NowPlaying {
+                    width: 100%;
                     height: 124px;
                     vertical-stretch: 0;
 
@@ -103,11 +118,36 @@ export component MainWindow inherits Window {
                     }
                 }
 
-                // Native video will be positioned over this component.
-                // It stays collapsed when the preview is hidden.
+                PlayerControl {
+                    width: 100%;
+                    height: 112px;
+                    vertical-stretch: 0;
+
+                    position: root.playback-position;
+                    duration: root.playback-duration;
+                    volume: root.playback-volume;
+                    paused: root.playback-paused;
+                    enabled: root.current-media-url != "";
+
+                    seek-requested(position) => {
+                        root.seek-requested(position);
+                    }
+
+                    volume-requested(volume) => {
+                        root.volume-requested(volume);
+                    }
+
+                    playback-toggle-requested => {
+                        root.playback-toggle-requested();
+                    }
+                }
+
+                // Native video is positioned over this component.
                 video-preview := VideoPreview {
                     width: 100%;
                     height: root.video-visible ? parent.width * 9 / 16 : 0px;
+                    vertical-stretch: 0;
+
                     video-visible: root.video-visible;
                     has-video: root.current-media-url != "";
                     current-track: root.current-track;
@@ -120,6 +160,7 @@ export component MainWindow inherits Window {
                 }
 
                 HorizontalLayout {
+                    width: 100%;
                     height: 18px;
                     spacing: 8px;
                     alignment: center;
@@ -138,10 +179,11 @@ export component MainWindow inherits Window {
                     }
                 }
 
-                // Keep a useful playlist viewport while allowing
-                // the overall content to scroll.
                 Playlist {
+                    width: 100%;
                     height: 180px;
+                    vertical-stretch: 0;
+
                     queue-items: root.queue-items;
                     selected-queue-index <=> root.selected-queue-index;
 
@@ -151,6 +193,7 @@ export component MainWindow inherits Window {
                 }
 
                 OverlaySection {
+                    width: 100%;
                     expanded <=> root.overlays-expanded;
                     copy-status <=> root.copy-status;
 
@@ -160,6 +203,8 @@ export component MainWindow inherits Window {
                 }
 
                 Footer {
+                    width: 100%;
+
                     open-creator-link => {
                         root.open-creator-link();
                     }

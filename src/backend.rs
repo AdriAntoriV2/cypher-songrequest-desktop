@@ -1,12 +1,9 @@
-use crate::models::{
-    PlaybackSyncState, PlayerState, QueueResponse, UiSnapshot,
-};
+
+use crate::models::{PlaybackSyncState, PlayerState, QueueResponse, UiSnapshot};
 use reqwest::blocking::Client;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
-
-pub const API_BASE_URL: &str = "http://127.0.0.1:8765";
 
 pub const POLL_INTERVAL: Duration = Duration::from_millis(500);
 pub const HTTP_TIMEOUT: Duration = Duration::from_secs(5);
@@ -18,9 +15,11 @@ pub fn create_client() -> Result<Client, String> {
         .map_err(|error| error.to_string())
 }
 
-pub fn fetch_snapshot(client: &Client) -> Result<UiSnapshot, String> {
+pub fn fetch_snapshot(client: &Client, api_base_url: &str) -> Result<UiSnapshot, String> {
+    let base_url = api_base_url.trim_end_matches('/');
+
     let queue: QueueResponse = client
-        .get(format!("{API_BASE_URL}/api/queue"))
+        .get(format!("{base_url}/api/queue"))
         .send()
         .map_err(|error| error.to_string())?
         .error_for_status()
@@ -29,7 +28,7 @@ pub fn fetch_snapshot(client: &Client) -> Result<UiSnapshot, String> {
         .map_err(|error| error.to_string())?;
 
     let player: PlayerState = client
-        .get(format!("{API_BASE_URL}/api/player/state"))
+        .get(format!("{base_url}/api/player/state"))
         .send()
         .map_err(|error| error.to_string())?
         .error_for_status()
@@ -64,12 +63,7 @@ pub fn fetch_snapshot(client: &Client) -> Result<UiSnapshot, String> {
     let current_artist = player
         .current
         .as_ref()
-        .map(|track| {
-            format!(
-                "{} · requested by {}",
-                track.uploader, track.requester
-            )
-        })
+        .map(|track| format!("{} · requested by {}", track.uploader, track.requester))
         .or_else(|| {
             queue.current.as_ref().and_then(|entry| {
                 entry.track.as_ref().map(|track| {
@@ -79,16 +73,11 @@ pub fn fetch_snapshot(client: &Client) -> Result<UiSnapshot, String> {
                         .map(|requester| requester.display_name.as_str())
                         .unwrap_or("Unknown");
 
-                    format!(
-                        "{} · requested by {}",
-                        track.uploader, requester
-                    )
+                    format!("{} · requested by {}", track.uploader, requester)
                 })
             })
         })
-        .unwrap_or_else(|| {
-            "Request a song to start playback".to_string()
-        });
+        .unwrap_or_else(|| "Request a song to start playback".to_string());
 
     let queue_items = queue
         .pending
@@ -123,28 +112,25 @@ pub fn fetch_snapshot(client: &Client) -> Result<UiSnapshot, String> {
 }
 
 pub fn start_polling(
+    api_base_url: String,
     playback_sync: Arc<Mutex<PlaybackSyncState>>,
     on_snapshot: impl Fn(UiSnapshot) + Send + 'static,
 ) {
     thread::spawn(move || {
         let client = match create_client() {
             Ok(client) => client,
-
             Err(error) => {
-                eprintln!(
-                    "[Backend] Failed to create HTTP client: {error}"
-                );
+                eprintln!("[Backend] Failed to create HTTP client: {error}");
                 return;
             }
         };
 
         loop {
-            match fetch_snapshot(&client) {
+            match fetch_snapshot(&client, &api_base_url) {
                 Ok(snapshot) => {
                     {
                         let mut sync = match playback_sync.lock() {
                             Ok(sync) => sync,
-
                             Err(error) => {
                                 eprintln!(
                                     "[Backend] Playback state mutex poisoned: {error}"
@@ -153,20 +139,15 @@ pub fn start_polling(
                             }
                         };
 
-                        sync.request_id =
-                            snapshot.current_request_id.clone();
-
+                        sync.request_id = snapshot.current_request_id.clone();
                         sync.playback = snapshot.playback.clone();
                         sync.control = snapshot.control.clone();
                     }
 
                     on_snapshot(snapshot);
                 }
-
                 Err(error) => {
-                    eprintln!(
-                        "[Backend] API request failed: {error}"
-                    );
+                    eprintln!("[Backend] API request failed: {error}");
                 }
             }
 
@@ -175,11 +156,14 @@ pub fn start_polling(
     });
 }
 
-pub fn skip() {
-    thread::spawn(|| {
+pub fn skip(api_base_url: String) {
+    thread::spawn(move || {
         let result = create_client().and_then(|client| {
             client
-                .post(format!("{API_BASE_URL}/api/player/skip"))
+                .post(format!(
+                    "{}/api/player/skip",
+                    api_base_url.trim_end_matches('/')
+                ))
                 .send()
                 .and_then(|response| response.error_for_status())
                 .map(|_| ())
@@ -187,15 +171,8 @@ pub fn skip() {
         });
 
         match result {
-            Ok(()) => {
-                println!("[Playback] Skip request accepted.");
-            }
-
-            Err(error) => {
-                eprintln!(
-                    "[Playback] Skip request failed: {error}"
-                );
-            }
+            Ok(()) => println!("[Playback] Skip request accepted."),
+            Err(error) => eprintln!("[Playback] Skip request failed: {error}"),
         }
     });
 }
