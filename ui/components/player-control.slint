@@ -11,14 +11,27 @@ export component PlayerControl inherits Rectangle {
     callback volume-requested(float);
     callback playback-toggle-requested();
 
-    private property <float> seek-position: root.position;
-    private property <bool> seek-dragging: false;
+in property <string> track-key: "";
 
-    changed position => {
-        if (!root.seek-dragging) {
-            root.seek-position = root.position;
-        }
+private property <float> seek-position: root.position;
+private property <bool> seek-dragging: false;
+
+changed position => {
+    if (!root.seek-dragging) {
+        root.seek-position = root.position;
     }
+}
+
+changed track-key => {
+    root.seek-dragging = false;
+    root.seek-position = 0;
+}
+
+changed duration => {
+    if (!root.seek-dragging) {
+        root.seek-position = root.position;
+    }
+}
 
     width: 100%;
     height: 112px;
@@ -56,26 +69,27 @@ export component PlayerControl inherits Rectangle {
                 }
             }
 
-            Slider {
-                width: parent.width - 160px;
-                height: 32px;
+Slider {
+    width: parent.width - 160px;
+    height: 32px;
 
-                enabled: root.enabled && root.duration > 0;
-                minimum: 0;
-                maximum: max(1, root.duration);
-                value: root.seek-position;
+    enabled: root.enabled && root.duration > 0;
+    minimum: 0;
+    maximum: max(1, root.duration);
 
-                changed(value) => {
-                    root.seek-dragging = true;
-                    root.seek-position = value;
-                }
+    // Two-way binding: the slider and local seek state stay synchronized.
+    value <=> root.seek-position;
 
-                released(value) => {
-                    root.seek-position = value;
-                    root.seek-requested(value);
-                    root.seek-dragging = false;
-                }
-            }
+    changed(value) => {
+        root.seek-dragging = true;
+    }
+
+    released(value) => {
+        root.seek-position = value;
+        root.seek-requested(value);
+        root.seek-dragging = false;
+    }
+}
 
             Rectangle {
                 width: 56px;

@@ -1,4 +1,3 @@
-
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::mpsc::{self, Sender};
@@ -71,10 +70,7 @@ fn start_player_control_worker(api_base_url: String) -> Sender<PlayerControlRequ
             }
         };
 
-        let endpoint = format!(
-            "{}/api/player/control",
-            api_base_url.trim_end_matches('/')
-        );
+        let endpoint = format!("{}/api/player/control", api_base_url.trim_end_matches('/'));
 
         while let Ok((action, value)) = receiver.recv() {
             let payload = match value {
@@ -86,16 +82,34 @@ fn start_player_control_worker(api_base_url: String) -> Sender<PlayerControlRequ
                     "action": action
                 }),
             };
-
             let result = client
                 .post(&endpoint)
                 .header("Content-Type", "application/json")
                 .body(payload.to_string())
-                .send()
-                .and_then(|response| response.error_for_status());
+                .send();
 
-            if let Err(error) = result {
-                eprintln!("[Player] Failed to send {action} control: {error}");
+            match result {
+                Ok(response) => {
+                    let status = response.status();
+
+                    match response.text() {
+                        Ok(body) => {
+                            println!(
+                                "[Player] Control response: action={action}, status={status}, body={body}"
+                            );
+
+                            if !status.is_success() {
+                                eprintln!("[Player] Backend rejected {action}: HTTP {status}");
+                            }
+                        }
+                        Err(error) => {
+                            eprintln!("[Player] Failed to read {action} response: {error}");
+                        }
+                    }
+                }
+                Err(error) => {
+                    eprintln!("[Player] Failed to send {action} control: {error}");
+                }
             }
         }
     });
@@ -103,20 +117,13 @@ fn start_player_control_worker(api_base_url: String) -> Sender<PlayerControlRequ
     sender
 }
 
-fn send_player_control(
-    sender: &Sender<PlayerControlRequest>,
-    action: &str,
-    value: Option<f64>,
-) {
+fn send_player_control(sender: &Sender<PlayerControlRequest>, action: &str, value: Option<f64>) {
     if let Err(error) = sender.send((action.to_owned(), value)) {
         eprintln!("[Player] Failed to queue control request: {error}");
     }
 }
 
-fn setup_window_controls(
-    ui: &MainWindow,
-    video_controller: Rc<RefCell<VideoPreviewController>>,
-) {
+fn setup_window_controls(ui: &MainWindow, video_controller: Rc<RefCell<VideoPreviewController>>) {
     let weak_ui = ui.as_weak();
 
     ui.on_minimize_requested(move || {

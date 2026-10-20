@@ -128,7 +128,8 @@ export component MainWindow inherits Window {
                     volume: root.playback-volume;
                     paused: root.playback-paused;
                     enabled: root.current-media-url != "";
-
+                    track-key: root.current-media-url;
+                    
                     seek-requested(position) => {
                         root.seek-requested(position);
                     }

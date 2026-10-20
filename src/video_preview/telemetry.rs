@@ -215,6 +215,14 @@ fn run_ipc_observer(
         if message["event"].as_str() != Some("property-change") {
             continue;
         }
+        if message["event"].as_str() != Some("property-change") {
+    if message["request_id"].is_number() || message["error"].is_string() {
+        println!(
+            "[Video] mpv IPC response: request_id={request_id}, message={message}"
+        );
+    }
+    continue;
+}
 
         let Some(name) = message["name"].as_str() else {
             eprintln!(
@@ -241,25 +249,29 @@ fn run_ipc_observer(
 
         match name {
             "time-pos" => {
-                if let Some(value) = data.as_f64() {
-                    if value.is_finite() && value >= 0.0 {
-                        let previous_position = state.position;
-                        state.position = Some(value);
+    if let Some(value) = data.as_f64() {
+        if value.is_finite() && value >= 0.0 {
+            let previous_position = state.position;
+            state.position = Some(value);
 
-                        if let Some(previous) = previous_position {
-                            if (value - previous).abs() >= 2.0 {
-                                println!(
-                                    "[Video] mpv position changed: \
-                                     {:.2}s -> {:.2}s",
-                                    previous, value
-                                );
-                            }
-                        } else {
-                            println!("[Video] Initial mpv position: {:.2}s", value);
-                        }
-                    }
-                }
+            let crossed_second = previous_position
+                .map(|previous| value.floor() > previous.floor())
+                .unwrap_or(true);
+
+            if crossed_second {
+                println!(
+                    "[Video] Observed playback position: {:.2}s",
+                    value
+                );
             }
+        }
+    } else {
+        eprintln!(
+            "[Video] Ignoring non-numeric time-pos event: \
+             request_id={request_id}, data={data}"
+        );
+    }
+}
             "duration" => {
                 if let Some(value) = data.as_f64() {
                     if value.is_finite() && value >= 0.0 {
