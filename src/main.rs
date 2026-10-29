@@ -41,6 +41,8 @@ use windows_sys::Win32::System::JobObjects::{
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{MessageBoxW, MB_ICONERROR, MB_OK};
 
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
 mod backend;
 mod config;
 mod models;
@@ -273,10 +275,10 @@ fn launch_backend_patcher() -> Result<BackendPatcher, Box<dyn std::error::Error>
     // Start suspended so the updater cannot spawn the core before being
     // assigned to the Job Object.
     let mut child = Command::new(&patcher_path)
-        .current_dir(bundle_dir)
-        .env(SONG_REQUEST_HOME_ENV, &data_dir)
-        .creation_flags(CREATE_SUSPENDED)
-        .spawn()
+    .current_dir(bundle_dir)
+    .env(SONG_REQUEST_HOME_ENV, &data_dir)
+    .creation_flags(CREATE_SUSPENDED | CREATE_NO_WINDOW)
+    .spawn()
         .map_err(|error| {
             io::Error::new(
                 error.kind(),
