@@ -1,5 +1,11 @@
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use std::cell::RefCell;
+use std::io;
+use std::mem::{size_of, zeroed};
+use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle, RawHandle};
+use std::os::windows::process::CommandExt;
+use std::process::{Child, Command};
 use std::rc::Rc;
 use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Mutex};
@@ -10,10 +16,36 @@ use arboard::Clipboard;
 use open::that;
 use slint::{ComponentHandle, ModelRc, SharedString, Timer, VecModel};
 
+use windows_sys::Win32::Foundation::{
+    CloseHandle,
+    GetLastError,
+    HANDLE,
+    INVALID_HANDLE_VALUE,
+    ERROR_ALREADY_EXISTS,
+};
+
+use windows_sys::Win32::System::Threading::{
+    CreateMutexW,
+    OpenThread,
+    ResumeThread,
+    CREATE_SUSPENDED,
+    THREAD_SUSPEND_RESUME,
+};
+use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+    CreateToolhelp32Snapshot, Thread32First, Thread32Next, THREADENTRY32, TH32CS_SNAPTHREAD,
+};
+use windows_sys::Win32::System::JobObjects::{
+    AssignProcessToJobObject, CreateJobObjectW, SetInformationJobObject,
+    JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+    JobObjectExtendedLimitInformation,
+};
+use windows_sys::Win32::UI::WindowsAndMessaging::{MessageBoxW, MB_ICONERROR, MB_OK};
+
 mod backend;
 mod config;
 mod models;
 mod video_preview;
+mod desktop_updater;
 
 use models::PlaybackSyncState;
 use video_preview::{native_window_handle, VideoPreviewController};
@@ -21,10 +53,65 @@ use video_preview::{native_window_handle, VideoPreviewController};
 slint::include_modules!();
 
 const VIDEO_SYNC_INTERVAL: Duration = Duration::from_millis(100);
+const PATCHER_EXE: &str = "CypherSR.exe";
+const DATA_DIRECTORY: &str = "data";
+const SONG_REQUEST_HOME_ENV: &str = "SONG_REQUEST_HOME";
 
 type PlayerControlRequest = (String, Option<f64>);
 
+/// Owns the updater and its Windows Job Object.
+///
+/// When the Job Object handle closes, Windows terminates processes in the job,
+/// including the core backend if the updater has already exited.
+struct BackendPatcher {
+    _child: Child,
+    _job: OwnedHandle,
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Acquire the single-instance lock BEFORE starting the updater.
+    let _single_instance = match acquire_single_instance() {
+        Ok(handle) => handle,
+
+        Err(error)
+            if error.kind() == std::io::ErrorKind::AlreadyExists =>
+        {
+            show_error_dialog(
+                "CypherSR Desktop is already running.\n\n\
+                 Check your taskbar or system tray for the existing window."
+            );
+
+            return Ok(());
+        }
+
+        Err(error) => {
+            show_error_dialog(&format!(
+                "Could not enforce single-instance mode:\n\n{error}"
+            ));
+
+            return Err(error.into());
+        }
+    };
+
+    // Only one desktop instance may reach this point.
+    if desktop_updater::check_and_apply_update() {
+        // PowerShell is waiting for this process to exit before replacing the EXE.
+        return Ok(());
+    }
+
+    // Only the instance holding the mutex can reach this point.
+    // Start the updater after the single-instance check.
+    let backend_patcher = match launch_backend_patcher() {
+        Ok(process) => process,
+        Err(error) => {
+            show_error_dialog(&format!(
+                "Could not start CypherSR updater:\n\n{error}"
+            ));
+
+            return Err(error.into());
+        }
+    };
+
     let config = config::AppConfig::load_or_create()?;
     let api_base_url = config.api_base_url();
 
@@ -37,7 +124,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         api_base_url.clone(),
     )));
 
-    // Shared between the backend worker, Slint event loop, and video timer.
     let playback_sync = Arc::new(Mutex::new(PlaybackSyncState::default()));
 
     let control_sender = start_player_control_worker(api_base_url.clone());
@@ -46,18 +132,313 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     setup_overlay_actions(&ui, api_base_url.clone());
     setup_playback_controls(&ui, api_base_url.clone(), control_sender);
 
-    // Player/backend status, queue, and playback synchronization.
     start_backend_polling(&ui, playback_sync.clone(), api_base_url.clone());
-
-    // Actual Twitch connection status, independently polled from the backend.
     start_twitch_status_polling(&ui, api_base_url);
 
-    let _video_timer = setup_video_preview(&ui, video_controller, playback_sync);
+    let video_timer = setup_video_preview(
+        &ui,
+        video_controller.clone(),
+        playback_sync,
+    );
 
-    Ok(ui.run()?)
+    let run_result = ui.run();
+
+    // Stop GUI-owned resources before the Job Object is dropped.
+    video_timer.stop();
+    video_controller.borrow_mut().shutdown();
+    drop(backend_patcher);
+
+    run_result?;
+    Ok(())
 }
 
-fn start_player_control_worker(api_base_url: String) -> Sender<PlayerControlRequest> {
+const SINGLE_INSTANCE_MUTEX: &str = "Local\\CypherSR.Desktop.SingleInstance";
+
+fn acquire_single_instance() -> std::io::Result<OwnedHandle> {
+    let mutex_name: Vec<u16> = SINGLE_INSTANCE_MUTEX
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
+
+    let handle = unsafe {
+        CreateMutexW(
+            std::ptr::null(),
+            0,
+            mutex_name.as_ptr(),
+        )
+    };
+
+    if handle.is_null() {
+        return Err(std::io::Error::last_os_error());
+    }
+
+    // Check immediately after CreateMutexW.
+    let last_error = unsafe { GetLastError() };
+
+    if last_error == ERROR_ALREADY_EXISTS {
+        unsafe {
+            CloseHandle(handle);
+        }
+
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::AlreadyExists,
+            "Another CypherSR Desktop instance is already running.",
+        ));
+    }
+
+    // Keep this handle alive for the entire desktop application lifetime.
+    Ok(unsafe {
+        OwnedHandle::from_raw_handle(handle as RawHandle)
+    })
+}
+
+/// Launches CypherSR.exe from the same directory as the desktop executable.
+fn launch_backend_patcher() -> Result<BackendPatcher, Box<dyn std::error::Error>> {
+    let executable = std::env::current_exe()?;
+
+    let bundle_dir = executable.parent().ok_or_else(|| {
+        io::Error::other("Could not determine the desktop executable directory")
+    })?;
+
+    let patcher_path = bundle_dir.join(PATCHER_EXE);
+
+    if !patcher_path.is_file() {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            format!(
+                "Patcher executable was not found: {}",
+                patcher_path.display()
+            ),
+        )
+        .into());
+    }
+
+    // Persistent portable data lives beside the executables.
+    let data_dir = bundle_dir.join(DATA_DIRECTORY);
+    std::fs::create_dir_all(&data_dir).map_err(|error| {
+        io::Error::new(
+            error.kind(),
+            format!(
+                "Could not create portable data directory {}: {error}",
+                data_dir.display()
+            ),
+        )
+    })?;
+
+    println!("[Launcher] Updater: {}", patcher_path.display());
+    println!("[Launcher] Data directory: {}", data_dir.display());
+
+    // Create the Job Object.
+    let job_handle = unsafe {
+        CreateJobObjectW(std::ptr::null(), std::ptr::null())
+    };
+
+    if job_handle.is_null() {
+        return Err(io::Error::other(format!(
+            "CreateJobObjectW failed: {}",
+            io::Error::last_os_error()
+        ))
+        .into());
+    }
+
+    // Immediately take ownership so all subsequent error paths close the handle.
+    let job = unsafe {
+        OwnedHandle::from_raw_handle(job_handle as RawHandle)
+    };
+
+    // Configure the Job Object to terminate its processes when the handle closes.
+    let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION =
+        unsafe { zeroed() };
+
+    limits.BasicLimitInformation.LimitFlags =
+        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+
+    let configured = unsafe {
+        SetInformationJobObject(
+            job_handle,
+            JobObjectExtendedLimitInformation,
+            &limits as *const _ as *const _,
+            size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+        )
+    };
+
+    if configured == 0 {
+        return Err(io::Error::other(format!(
+            "SetInformationJobObject failed: {}",
+            io::Error::last_os_error()
+        ))
+        .into());
+    }
+
+    // Start suspended so the updater cannot spawn the core before being
+    // assigned to the Job Object.
+    let mut child = Command::new(&patcher_path)
+        .current_dir(bundle_dir)
+        .env(SONG_REQUEST_HOME_ENV, &data_dir)
+        .creation_flags(CREATE_SUSPENDED)
+        .spawn()
+        .map_err(|error| {
+            io::Error::new(
+                error.kind(),
+                format!(
+                    "Could not spawn updater {}: {error}",
+                    patcher_path.display()
+                ),
+            )
+        })?;
+
+    println!("[Launcher] Updater created suspended (PID {}).", child.id());
+
+    // Assign the suspended updater to the Job Object.
+    let assigned = unsafe {
+        AssignProcessToJobObject(
+            job_handle,
+            child.as_raw_handle() as HANDLE,
+        )
+    };
+
+    if assigned == 0 {
+        let error = io::Error::other(format!(
+            "AssignProcessToJobObject failed: {}",
+            io::Error::last_os_error()
+        ));
+
+        terminate_child(&mut child);
+        return Err(error.into());
+    }
+
+    println!("[Launcher] Updater assigned to Job Object.");
+
+    // IMPORTANT: OpenThread needs a thread ID, not child.id() (the process ID).
+    resume_suspended_process(child.id()).map_err(|error| {
+        terminate_child(&mut child);
+        error
+    })?;
+
+    println!("[Launcher] Updater resumed successfully.");
+
+    Ok(BackendPatcher {
+        _child: child,
+        _job: job,
+    })
+}
+
+/// Finds and resumes the suspended updater's primary thread.
+///
+/// The updater was created with CREATE_SUSPENDED, so its primary thread
+/// should be present in the system thread snapshot.
+fn resume_suspended_process(process_id: u32) -> io::Result<()> {
+    unsafe {
+        let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+
+        if snapshot == INVALID_HANDLE_VALUE {
+            return Err(io::Error::other(format!(
+                "CreateToolhelp32Snapshot failed: {}",
+                io::Error::last_os_error()
+            )));
+        }
+
+        let mut entry: THREADENTRY32 = zeroed();
+        entry.dwSize = size_of::<THREADENTRY32>() as u32;
+
+        if Thread32First(snapshot, &mut entry) == 0 {
+            let error = io::Error::last_os_error();
+            CloseHandle(snapshot);
+
+            return Err(io::Error::other(format!(
+                "Thread32First failed: {error}"
+            )));
+        }
+
+        loop {
+            if entry.th32OwnerProcessID == process_id {
+                let thread_id = entry.th32ThreadID;
+
+                let thread_handle = OpenThread(
+                    THREAD_SUSPEND_RESUME,
+                    0,
+                    thread_id,
+                );
+
+                if thread_handle.is_null() {
+                    let error = io::Error::last_os_error();
+                    CloseHandle(snapshot);
+
+                    return Err(io::Error::other(format!(
+                        "OpenThread failed for updater PID {process_id}, \
+                         thread ID {thread_id}: {error}"
+                    )));
+                }
+
+                let resume_result = ResumeThread(thread_handle);
+                let resume_error = if resume_result == u32::MAX {
+                    Some(io::Error::last_os_error())
+                } else {
+                    None
+                };
+
+                CloseHandle(thread_handle);
+                CloseHandle(snapshot);
+
+                return match resume_error {
+                    Some(error) => Err(io::Error::other(format!(
+                        "ResumeThread failed for updater PID {process_id}, \
+                         thread ID {thread_id}: {error}"
+                    ))),
+                    None => Ok(()),
+                };
+            }
+
+            entry.dwSize = size_of::<THREADENTRY32>() as u32;
+
+            if Thread32Next(snapshot, &mut entry) == 0 {
+                let error = io::Error::last_os_error();
+                CloseHandle(snapshot);
+
+                return Err(io::Error::other(format!(
+                    "Could not find a thread for updater PID {process_id}: \
+                     {error}"
+                )));
+            }
+        }
+    }
+}
+
+/// Stops a child process on a startup failure and waits for termination.
+fn terminate_child(child: &mut Child) {
+    if let Err(error) = child.kill() {
+        eprintln!("[Launcher] Failed to terminate updater: {error}");
+    }
+
+    if let Err(error) = child.wait() {
+        eprintln!("[Launcher] Failed to wait for updater: {error}");
+    }
+}
+
+fn show_error_dialog(message: &str) {
+    let title: Vec<u16> = "CypherSR Desktop"
+        .encode_utf16()
+        .chain(Some(0))
+        .collect();
+
+    let message: Vec<u16> = message
+        .encode_utf16()
+        .chain(Some(0))
+        .collect();
+
+    unsafe {
+        MessageBoxW(
+            std::ptr::null_mut(),
+            message.as_ptr(),
+            title.as_ptr(),
+            MB_OK | MB_ICONERROR,
+        );
+    }
+}
+
+fn start_player_control_worker(
+    api_base_url: String,
+) -> Sender<PlayerControlRequest> {
     let (sender, receiver) = mpsc::channel::<PlayerControlRequest>();
 
     thread::spawn(move || {
@@ -101,12 +482,14 @@ fn start_player_control_worker(api_base_url: String) -> Sender<PlayerControlRequ
                     match response.text() {
                         Ok(body) => {
                             println!(
-                                "[Player] Control response: action={action}, status={status}, body={body}"
+                                "[Player] Control response: \
+                                 action={action}, status={status}, body={body}"
                             );
 
                             if !status.is_success() {
                                 eprintln!(
-                                    "[Player] Backend rejected {action}: HTTP {status}"
+                                    "[Player] Backend rejected {action}: \
+                                     HTTP {status}"
                                 );
                             }
                         }
@@ -151,14 +534,9 @@ fn setup_window_controls(
         }
     });
 
-    let weak_ui = ui.as_weak();
-
     ui.on_close_window_requested(move || {
         video_controller.borrow_mut().shutdown();
-
-        if let Some(ui) = weak_ui.upgrade() {
-            let _ = ui.window().hide();
-        }
+        let _ = slint::quit_event_loop();
     });
 }
 
@@ -183,8 +561,6 @@ fn setup_overlay_actions(ui: &MainWindow, api_base_url: String) {
         }
     });
 
-    // The button requests a state change. The polling thread determines
-    // the actual connection state and updates the UI.
     let weak_ui = ui.as_weak();
 
     ui.on_connection_toggle_requested(move || {
@@ -210,23 +586,30 @@ fn setup_playback_controls(
     api_base_url: String,
     control_sender: Sender<PlayerControlRequest>,
 ) {
-    let skip_api_url = api_base_url;
-
     ui.on_skip_requested(move || {
-        backend::skip(skip_api_url.clone());
+        backend::skip(api_base_url.clone());
     });
 
     let sender = control_sender.clone();
 
     ui.on_seek_requested(move |position| {
-        send_player_control(&sender, "seek", Some(f64::from(position)));
+        send_player_control(
+            &sender,
+            "seek",
+            Some(f64::from(position)),
+        );
     });
 
     let sender = control_sender.clone();
 
     ui.on_volume_requested(move |volume| {
         let volume = f64::from(volume).clamp(0.0, 1.0);
-        send_player_control(&sender, "volume", Some(volume));
+
+        send_player_control(
+            &sender,
+            "volume",
+            Some(volume),
+        );
     });
 
     let sender = control_sender;
@@ -258,80 +641,96 @@ fn start_backend_polling(
 ) {
     let weak_ui = ui.as_weak();
 
-    backend::start_polling(api_base_url, playback_sync, move |snapshot| {
-        let weak_ui = weak_ui.clone();
+    backend::start_polling(
+        api_base_url,
+        playback_sync,
+        move |snapshot| {
+            let weak_ui = weak_ui.clone();
 
-        let result = slint::invoke_from_event_loop(move || {
-            let Some(ui) = weak_ui.upgrade() else {
-                return;
-            };
+            let result = slint::invoke_from_event_loop(move || {
+                let Some(ui) = weak_ui.upgrade() else {
+                    return;
+                };
 
-            // This property means player/backend API connectivity only.
-            ui.set_connected(snapshot.connected);
-            ui.set_current_track(snapshot.current_track.into());
-            ui.set_current_artist(snapshot.current_artist.into());
-            ui.set_current_media_url(snapshot.current_media_url.into());
+                ui.set_connected(snapshot.connected);
+                ui.set_current_track(snapshot.current_track.into());
+                ui.set_current_artist(snapshot.current_artist.into());
+                ui.set_current_media_url(snapshot.current_media_url.into());
 
-            let items: Vec<SharedString> = snapshot
-                .queue_items
-                .into_iter()
-                .map(SharedString::from)
-                .collect();
+                let items: Vec<SharedString> = snapshot
+                    .queue_items
+                    .into_iter()
+                    .map(SharedString::from)
+                    .collect();
 
-            let model = Rc::new(VecModel::from(items));
-            ui.set_queue_items(ModelRc::from(model));
+                let model = Rc::new(VecModel::from(items));
+                ui.set_queue_items(ModelRc::from(model));
 
-            // These properties synchronize the UI with the backend.
-            // They do not send playback commands to mpv.
-            ui.set_playback_position(snapshot.playback.position as f32);
-            ui.set_playback_duration(snapshot.playback.duration as f32);
-            ui.set_playback_volume(snapshot.playback.volume as f32);
-            ui.set_playback_paused(snapshot.playback.paused);
-        });
+                ui.set_playback_position(
+                    snapshot.playback.position as f32,
+                );
+                ui.set_playback_duration(
+                    snapshot.playback.duration as f32,
+                );
+                ui.set_playback_volume(
+                    snapshot.playback.volume as f32,
+                );
+                ui.set_playback_paused(snapshot.playback.paused);
+            });
 
-        if let Err(error) = result {
-            eprintln!("[Backend] Failed to schedule UI update: {error}");
-        }
-    });
+            if let Err(error) = result {
+                eprintln!(
+                    "[Backend] Failed to schedule UI update: {error}"
+                );
+            }
+        },
+    );
 }
 
-fn start_twitch_status_polling(ui: &MainWindow, api_base_url: String) {
+fn start_twitch_status_polling(
+    ui: &MainWindow,
+    api_base_url: String,
+) {
     let weak_ui = ui.as_weak();
 
-    backend::start_twitch_status_polling(api_base_url, move |status| {
-        let weak_ui = weak_ui.clone();
+    backend::start_twitch_status_polling(
+        api_base_url,
+        move |status| {
+            let weak_ui = weak_ui.clone();
 
-        let result = slint::invoke_from_event_loop(move || {
-            let Some(ui) = weak_ui.upgrade() else {
-                return;
-            };
+            let result = slint::invoke_from_event_loop(move || {
+                let Some(ui) = weak_ui.upgrade() else {
+                    return;
+                };
 
-            // Show an explicit error state if the status endpoint fails.
-            let status_label = if status.error.is_some() {
-                "error"
-            } else if status.connecting {
-                "connecting"
-            } else if status.connected {
-                "connected"
-            } else {
-                "offline"
-            };
+                let status_label = if status.error.is_some() {
+                    "error"
+                } else if status.connecting {
+                    "connecting"
+                } else if status.connected {
+                    "connected"
+                } else {
+                    "offline"
+                };
 
-            ui.set_twitch_connected(status.connected);
-            ui.set_twitch_connecting(status.connecting);
-            ui.set_twitch_status(status_label.into());
+                ui.set_twitch_connected(status.connected);
+                ui.set_twitch_connecting(status.connecting);
+                ui.set_twitch_status(status_label.into());
 
-            if let Some(username) = status.username {
-                if !username.trim().is_empty() {
-                    ui.set_username(username.into());
+                if let Some(username) = status.username {
+                    if !username.trim().is_empty() {
+                        ui.set_username(username.into());
+                    }
                 }
-            }
-        });
+            });
 
-        if let Err(error) = result {
-            eprintln!("[Twitch] Failed to schedule UI update: {error}");
-        }
-    });
+            if let Err(error) = result {
+                eprintln!(
+                    "[Twitch] Failed to schedule UI update: {error}"
+                );
+            }
+        },
+    );
 }
 
 fn setup_video_preview(
@@ -356,7 +755,9 @@ fn setup_video_preview(
             let sync = match playback_sync.lock() {
                 Ok(sync) => sync.clone(),
                 Err(error) => {
-                    eprintln!("[Video] Playback sync mutex poisoned: {error}");
+                    eprintln!(
+                        "[Video] Playback sync mutex poisoned: {error}"
+                    );
                     return;
                 }
             };

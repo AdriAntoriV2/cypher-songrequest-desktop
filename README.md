@@ -12,6 +12,8 @@ implement Twitch chat ingestion, song-request submission, or queue management.
 - The desktop polls `GET /api/queue` and `GET /api/player/state` every 500 ms
   to display the current track, pending queue, and playback state. Queue and
   track processing happen in the backend, not in this app.
+- The title bar also polls `GET /api/twitch/status` every 500 ms for Twitch
+  authentication and connection state.
 - The app launches `mpv` as a child process and embeds its native video window
   in the desktop UI. mpv is controlled through its named-pipe IPC interface.
 - `config.toml` stores the backend address and playback-related settings,
@@ -20,6 +22,27 @@ implement Twitch chat ingestion, song-request submission, or queue management.
 In short, this app depends on a separate backend service to accept Twitch
 requests and maintain the queue. This repo is the desktop client; the exact
 backend repository is not specified here.
+
+## Title bar and Twitch connection
+
+- The left side shows Twitch as **Offline**, **Connecting...**, **Online**, or
+  **Connection error**. A status polling failure is displayed as a connection
+  error; polling continues so the UI can recover when the backend is available
+  again.
+- **Connect** sends `POST /api/twitch/connect`; **Disconnect** sends
+  `POST /api/twitch/disconnect`. The button is disabled while the backend
+  reports that Twitch is connecting. The status poll, rather than the button
+  request, determines the displayed connection state.
+- When Twitch is connected, the title bar displays a greeting with the
+  authenticated username.
+- The title bar also provides **minimize** and **close** controls. Its empty
+  space can be used to drag the borderless window.
+- Twitch authentication and connection management are handled by the separate
+  backend. These controls request connection changes and display the backend's
+  status; they do not implement Twitch login in the desktop app.
+
+The Twitch connection status is separate from the desktop's player/backend API
+connectivity and playback status.
 
 ## Playback controls and synchronization
 
@@ -35,9 +58,6 @@ backend repository is not specified here.
   observed over IPC and reported to `POST /api/player/telemetry` every 500 ms.
   At end of track, the app sends final telemetry and notifies
   `POST /api/player/ended`.
-
-The connection button is currently a UI placeholder: Twitch login/disconnect
-is not wired up in this desktop app.
 
 ## Main libraries and components
 
