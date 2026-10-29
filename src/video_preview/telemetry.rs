@@ -251,19 +251,7 @@ fn run_ipc_observer(
             "time-pos" => {
     if let Some(value) = data.as_f64() {
         if value.is_finite() && value >= 0.0 {
-            let previous_position = state.position;
             state.position = Some(value);
-
-            let crossed_second = previous_position
-                .map(|previous| value.floor() > previous.floor())
-                .unwrap_or(true);
-
-            if crossed_second {
-                println!(
-                    "[Video] Observed playback position: {:.2}s",
-                    value
-                );
-            }
         }
     } else {
         eprintln!(

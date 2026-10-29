@@ -52,27 +52,19 @@ pub struct PlayerTrack {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct PlaybackState {
-    #[serde(rename = "requestId")]
-    pub request_id: Option<String>,
-
     pub position: f64,
     pub duration: f64,
     pub volume: f64,
     pub paused: bool,
-
-    #[serde(rename = "updatedAt")]
-    pub updated_at: u64,
 }
 
 impl Default for PlaybackState {
     fn default() -> Self {
         Self {
-            request_id: None,
             position: 0.0,
             duration: 0.0,
             volume: 1.0,
             paused: true,
-            updated_at: 0,
         }
     }
 }
@@ -101,4 +93,14 @@ pub struct PlaybackSyncState {
     pub request_id: Option<String>,
     pub playback: PlaybackState,
     pub control: Option<PlayerControl>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct TwitchStatus {
+    pub authenticated: bool,
+    pub connecting: bool,
+    pub connected: bool,
+    pub username: Option<String>,
+    pub error: Option<String>,
 }

@@ -21,6 +21,11 @@ export component MainWindow inherits Window {
 
     in-out property <string> username: "Username";
     in-out property <bool> connected: false;
+
+    // Twitch state reported by the backend API.
+    in-out property <bool> twitch-connected: false;
+    in-out property <bool> twitch-connecting: false;
+    in-out property <string> twitch-status: "offline";
     in-out property <string> current-track: "Nothing playing";
     in-out property <string> current-artist: "Request a song to start playback";
     in-out property <[string]> queue-items: [];
@@ -70,7 +75,9 @@ export component MainWindow inherits Window {
         TitleBar {
             width: 100%;
             username: root.username;
-            connected: root.connected;
+            twitch-connected: root.twitch-connected;
+            twitch-connecting: root.twitch-connecting;
+            twitch-status: root.twitch-status;
 
             connection-toggle-requested => {
                 root.connection-toggle-requested();
@@ -129,7 +136,7 @@ export component MainWindow inherits Window {
                     paused: root.playback-paused;
                     enabled: root.current-media-url != "";
                     track-key: root.current-media-url;
-                    
+
                     seek-requested(position) => {
                         root.seek-requested(position);
                     }

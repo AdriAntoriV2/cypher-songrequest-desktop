@@ -1,7 +1,9 @@
 
 export component TitleBar inherits Rectangle {
     in property <string> username: "Username";
-    in property <bool> connected: false;
+    in property <bool> twitch-connected: false;
+    in property <bool> twitch-connecting: false;
+    in property <string> twitch-status: "offline";
 
     callback connection-toggle-requested();
     callback minimize-requested();
@@ -10,7 +12,7 @@ export component TitleBar inherits Rectangle {
     background: transparent;
     height: 32px;
 
-    // Drag the borderless window using otherwise empty title-bar space.
+    // Drag the borderless window using empty title-bar space.
     WindowMoveArea {
         x: 0px;
         y: 0px;
@@ -18,147 +20,169 @@ export component TitleBar inherits Rectangle {
         height: 100%;
     }
 
-    // LEFT: connection status.
     HorizontalLayout {
+        x: 0px;
+        y: 0px;
+        width: 100%;
+        height: 100%;
         spacing: 0px;
-        alignment: start;
 
+        // LEFT: Twitch status.
         Rectangle {
             width: 120px;
             background: transparent;
 
-            VerticalLayout {
-                alignment: center;
+            HorizontalLayout {
+                spacing: 6px;
+                alignment: start;
 
-                HorizontalLayout {
-                    spacing: 6px;
-                    alignment: start;
+                VerticalLayout {
+                    alignment: center;
 
-                    VerticalLayout {
-                        alignment: center;
+                    Rectangle {
+                        width: 7px;
+                        height: 7px;
+                        border-radius: 4px;
 
-                        Rectangle {
-                            width: 7px;
-                            height: 7px;
-                            border-radius: 4px;
-                            background: root.connected ? #0077C2 : #777A83;
-                        }
+                        background: root.twitch-status == "connected" ? #0077C2
+                            : root.twitch-status == "connecting" ? #E5B94C
+                            : root.twitch-status == "error" ? #E05252
+                            : #777A83;
                     }
+                }
+
+                VerticalLayout {
+                    alignment: center;
 
                     Text {
-                        text: root.connected ? "Online" : "Offline";
+                        text: root.twitch-status == "connected" ? "Online"
+                            : root.twitch-status == "connecting" ? "Connecting..."
+                            : root.twitch-status == "error" ? "Connection error"
+                            : "Offline";
+
                         color: #92959C;
                         font-size: 11px;
+                        overflow: elide;
+                    }
+                }
+            }
+        }
+
+        // CENTER: centered in the space remaining after both side regions.
+        HorizontalLayout {
+            horizontal-stretch: 1;
+            alignment: center;
+            spacing: 5px;
+
+            if root.twitch-connected: HorizontalLayout {
+                spacing: 5px;
+                alignment: center;
+
+                Text {
+                    text: "Hi,";
+                    color: #F0F0F2;
+                    font-size: 14px;
+                    font-weight: 600;
+                    vertical-alignment: center;
+                }
+
+                Text {
+                    text: root.username;
+                    color: #0077C2;
+                    font-size: 14px;
+                    font-weight: 600;
+                    overflow: elide;
+                    vertical-alignment: center;
+                }
+            }
+        }
+
+        // RIGHT: Connection and window controls.
+        HorizontalLayout {
+            alignment: end;
+            spacing: 5px;
+
+            TouchArea {
+                width: 94px;
+                height: 27px;
+                enabled: !root.twitch-connecting;
+
+                Rectangle {
+                    width: 100%;
+                    height: 100%;
+                    border-radius: 4px;
+
+                    background: root.twitch-connected ? #191B1E : #0077C2;
+                    border-width: 1px;
+                    border-color: root.twitch-connected ? #303238 : #0077C2;
+
+                    Text {
+                        text: root.twitch-connecting ? "Connecting..."
+                            : root.twitch-connected ? "Disconnect"
+                            : "Connect";
+
+                        color: #F0F0F2;
+                        font-size: 11px;
+                        horizontal-alignment: center;
                         vertical-alignment: center;
                     }
                 }
-            }
-        }
-    }
 
-    // CENTER: greeting.
-    HorizontalLayout {
-        alignment: center;
-        spacing: 5px;
-
-        Text {
-            text: "Hi,";
-            color: #F0F0F2;
-            font-size: 14px;
-            font-weight: 600;
-            vertical-alignment: center;
-        }
-
-        Text {
-            text: root.username;
-            color: #0077C2;
-            font-size: 14px;
-            font-weight: 600;
-            overflow: elide;
-            vertical-alignment: center;
-        }
-    }
-
-    // RIGHT: interactive controls stay above the drag area.
-    HorizontalLayout {
-        alignment: end;
-        spacing: 5px;
-
-        TouchArea {
-            width: 94px;
-            height: 27px;
-
-            Rectangle {
-                width: 100%;
-                height: 100%;
-                border-radius: 4px;
-                background: root.connected ? #191B1E : #0077C2;
-                border-width: 1px;
-                border-color: root.connected ? #303238 : #0077C2;
-
-                Text {
-                    text: root.connected ? "Disconnect" : "Connect";
-                    color: #F0F0F2;
-                    font-size: 11px;
-                    horizontal-alignment: center;
-                    vertical-alignment: center;
+                clicked => {
+                    root.connection-toggle-requested();
                 }
             }
 
-            clicked => {
-                root.connection-toggle-requested();
-            }
-        }
+            TouchArea {
+                width: 29px;
+                height: 27px;
 
-        TouchArea {
-            width: 29px;
-            height: 27px;
+                Rectangle {
+                    width: 100%;
+                    height: 100%;
+                    border-radius: 4px;
+                    background: #191B1E;
+                    border-width: 1px;
+                    border-color: #303238;
 
-            Rectangle {
-                width: 100%;
-                height: 100%;
-                border-radius: 4px;
-                background: #191B1E;
-                border-width: 1px;
-                border-color: #303238;
+                    Text {
+                        text: "−";
+                        color: #F0F0F2;
+                        font-size: 16px;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
 
-                Text {
-                    text: "−";
-                    color: #F0F0F2;
-                    font-size: 16px;
-                    horizontal-alignment: center;
-                    vertical-alignment: center;
+                clicked => {
+                    root.minimize-requested();
                 }
             }
 
-            clicked => {
-                root.minimize-requested();
-            }
-        }
+            TouchArea {
+                width: 29px;
+                height: 27px;
 
-        TouchArea {
-            width: 29px;
-            height: 27px;
+                Rectangle {
+                    width: 100%;
+                    height: 100%;
+                    border-radius: 4px;
+                    background: #191B1E;
+                    border-width: 1px;
+                    border-color: #303238;
 
-            Rectangle {
-                width: 100%;
-                height: 100%;
-                border-radius: 4px;
-                background: #191B1E;
-                border-width: 1px;
-                border-color: #303238;
-
-                Text {
-                    text: "×";
-                    color: #F0F0F2;
-                    font-size: 16px;
-                    horizontal-alignment: center;
-                    vertical-alignment: center;
+                    Text {
+                        text: "×";
+                        color: #F0F0F2;
+                        font-size: 16px;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
                 }
-            }
 
-            clicked => {
-                root.close-window-requested();
+                clicked => {
+                    root.close-window-requested();
+                }
             }
         }
     }

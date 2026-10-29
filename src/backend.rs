@@ -1,5 +1,7 @@
 
-use crate::models::{PlaybackSyncState, PlayerState, QueueResponse, UiSnapshot};
+use crate::models::{
+    PlaybackSyncState, PlayerState, QueueResponse, TwitchStatus, UiSnapshot,
+};
 use reqwest::blocking::Client;
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -15,7 +17,80 @@ pub fn create_client() -> Result<Client, String> {
         .map_err(|error| error.to_string())
 }
 
-pub fn fetch_snapshot(client: &Client, api_base_url: &str) -> Result<UiSnapshot, String> {
+/// Poll the Twitch status endpoint and forward each result to the caller.
+pub fn start_twitch_status_polling(
+    api_base_url: String,
+    on_status: impl Fn(TwitchStatus) + Send + 'static,
+) {
+    thread::spawn(move || {
+        let client = match create_client() {
+            Ok(client) => client,
+            Err(error) => {
+                eprintln!("[Twitch] Failed to create HTTP client: {error}");
+                return;
+            }
+        };
+
+        let endpoint = format!(
+            "{}/api/twitch/status",
+            api_base_url.trim_end_matches('/')
+        );
+
+        loop {
+            let result = client
+                .get(&endpoint)
+                .send()
+                .and_then(|response| response.error_for_status())
+                .and_then(|response| response.json::<TwitchStatus>());
+
+            match result {
+                Ok(status) => on_status(status),
+                Err(error) => {
+                    eprintln!("[Twitch] Failed to fetch status: {error}");
+
+                    on_status(TwitchStatus {
+                        error: Some(format!("Backend unavailable: {error}")),
+                        ..TwitchStatus::default()
+                    });
+                }
+            }
+
+            thread::sleep(POLL_INTERVAL);
+        }
+    });
+}
+
+/// Ask the backend to connect or disconnect Twitch.
+pub fn request_twitch_connection(api_base_url: String, connect: bool) {
+    thread::spawn(move || {
+        let action = if connect { "connect" } else { "disconnect" };
+
+        let endpoint = format!(
+            "{}/api/twitch/{action}",
+            api_base_url.trim_end_matches('/')
+        );
+
+        let result = create_client().and_then(|client| {
+            client
+                .post(&endpoint)
+                .send()
+                .and_then(|response| response.error_for_status())
+                .map(|_| ())
+                .map_err(|error| error.to_string())
+        });
+
+        match result {
+            Ok(()) => println!("[Twitch] {action} request accepted."),
+            Err(error) => eprintln!("[Twitch] {action} request failed: {error}"),
+        }
+    });
+}
+
+/// Fetch the player and queue state used by the main window.
+pub fn fetch_snapshot(
+    client: &Client,
+    api_base_url: &str,
+) -> Result<UiSnapshot, String> {
     let base_url = api_base_url.trim_end_matches('/');
 
     let queue: QueueResponse = client
@@ -63,7 +138,12 @@ pub fn fetch_snapshot(client: &Client, api_base_url: &str) -> Result<UiSnapshot,
     let current_artist = player
         .current
         .as_ref()
-        .map(|track| format!("{} · requested by {}", track.uploader, track.requester))
+        .map(|track| {
+            format!(
+                "{} · requested by {}",
+                track.uploader, track.requester
+            )
+        })
         .or_else(|| {
             queue.current.as_ref().and_then(|entry| {
                 entry.track.as_ref().map(|track| {
@@ -100,6 +180,7 @@ pub fn fetch_snapshot(client: &Client, api_base_url: &str) -> Result<UiSnapshot,
         .collect();
 
     Ok(UiSnapshot {
+        // This is backend/player API connectivity, not Twitch connectivity.
         connected: true,
         current_track,
         current_artist,
@@ -111,6 +192,7 @@ pub fn fetch_snapshot(client: &Client, api_base_url: &str) -> Result<UiSnapshot,
     })
 }
 
+/// Poll the player and queue, keeping the native video preview synchronized.
 pub fn start_polling(
     api_base_url: String,
     playback_sync: Arc<Mutex<PlaybackSyncState>>,
@@ -143,15 +225,8 @@ pub fn start_polling(
                         sync.playback = snapshot.playback.clone();
                         sync.control = snapshot.control.clone();
                     }
-                    
 
-                    let request_id = snapshot.current_request_id.clone();
-                    let media_url = snapshot.current_media_url.clone();
-                    // println!(
-                    //     "[Backend] Snapshot: request_id={request_id:?}, media_url={media_url}"
-                    // );
                     on_snapshot(snapshot);
-
                 }
                 Err(error) => {
                     eprintln!("[Backend] API request failed: {error}");
@@ -163,6 +238,7 @@ pub fn start_polling(
     });
 }
 
+/// Request that the backend skip the currently playing song.
 pub fn skip(api_base_url: String) {
     thread::spawn(move || {
         let result = create_client().and_then(|client| {

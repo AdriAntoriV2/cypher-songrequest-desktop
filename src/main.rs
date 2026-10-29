@@ -1,3 +1,4 @@
+
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::mpsc::{self, Sender};
@@ -15,7 +16,7 @@ mod models;
 mod video_preview;
 
 use models::PlaybackSyncState;
-use video_preview::{VideoPreviewController, native_window_handle};
+use video_preview::{native_window_handle, VideoPreviewController};
 
 slint::include_modules!();
 
@@ -36,19 +37,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         api_base_url.clone(),
     )));
 
-    /*
-     * Shared between the backend worker thread,
-     * the Slint event loop, and the video timer.
-     */
+    // Shared between the backend worker, Slint event loop, and video timer.
     let playback_sync = Arc::new(Mutex::new(PlaybackSyncState::default()));
 
     let control_sender = start_player_control_worker(api_base_url.clone());
 
     setup_window_controls(&ui, video_controller.clone());
-    setup_overlay_actions(&ui);
+    setup_overlay_actions(&ui, api_base_url.clone());
     setup_playback_controls(&ui, api_base_url.clone(), control_sender);
 
-    start_backend_polling(&ui, playback_sync.clone(), api_base_url);
+    // Player/backend status, queue, and playback synchronization.
+    start_backend_polling(&ui, playback_sync.clone(), api_base_url.clone());
+
+    // Actual Twitch connection status, independently polled from the backend.
+    start_twitch_status_polling(&ui, api_base_url);
 
     let _video_timer = setup_video_preview(&ui, video_controller, playback_sync);
 
@@ -70,7 +72,10 @@ fn start_player_control_worker(api_base_url: String) -> Sender<PlayerControlRequ
             }
         };
 
-        let endpoint = format!("{}/api/player/control", api_base_url.trim_end_matches('/'));
+        let endpoint = format!(
+            "{}/api/player/control",
+            api_base_url.trim_end_matches('/')
+        );
 
         while let Ok((action, value)) = receiver.recv() {
             let payload = match value {
@@ -82,6 +87,7 @@ fn start_player_control_worker(api_base_url: String) -> Sender<PlayerControlRequ
                     "action": action
                 }),
             };
+
             let result = client
                 .post(&endpoint)
                 .header("Content-Type", "application/json")
@@ -99,16 +105,22 @@ fn start_player_control_worker(api_base_url: String) -> Sender<PlayerControlRequ
                             );
 
                             if !status.is_success() {
-                                eprintln!("[Player] Backend rejected {action}: HTTP {status}");
+                                eprintln!(
+                                    "[Player] Backend rejected {action}: HTTP {status}"
+                                );
                             }
                         }
                         Err(error) => {
-                            eprintln!("[Player] Failed to read {action} response: {error}");
+                            eprintln!(
+                                "[Player] Failed to read {action} response: {error}"
+                            );
                         }
                     }
                 }
                 Err(error) => {
-                    eprintln!("[Player] Failed to send {action} control: {error}");
+                    eprintln!(
+                        "[Player] Failed to send {action} control: {error}"
+                    );
                 }
             }
         }
@@ -117,13 +129,20 @@ fn start_player_control_worker(api_base_url: String) -> Sender<PlayerControlRequ
     sender
 }
 
-fn send_player_control(sender: &Sender<PlayerControlRequest>, action: &str, value: Option<f64>) {
+fn send_player_control(
+    sender: &Sender<PlayerControlRequest>,
+    action: &str,
+    value: Option<f64>,
+) {
     if let Err(error) = sender.send((action.to_owned(), value)) {
         eprintln!("[Player] Failed to queue control request: {error}");
     }
 }
 
-fn setup_window_controls(ui: &MainWindow, video_controller: Rc<RefCell<VideoPreviewController>>) {
+fn setup_window_controls(
+    ui: &MainWindow,
+    video_controller: Rc<RefCell<VideoPreviewController>>,
+) {
     let weak_ui = ui.as_weak();
 
     ui.on_minimize_requested(move || {
@@ -143,29 +162,46 @@ fn setup_window_controls(ui: &MainWindow, video_controller: Rc<RefCell<VideoPrev
     });
 }
 
-fn setup_overlay_actions(ui: &MainWindow) {
+fn setup_overlay_actions(ui: &MainWindow, api_base_url: String) {
     ui.on_copy_overlay_url(|url| match Clipboard::new() {
         Ok(mut clipboard) => match clipboard.set_text(url.to_string()) {
             Ok(()) => true,
             Err(error) => {
-                eprintln!("Failed to copy URL: {error}");
+                eprintln!("[Overlay] Failed to copy URL: {error}");
                 false
             }
         },
         Err(error) => {
-            eprintln!("Failed to access clipboard: {error}");
+            eprintln!("[Overlay] Failed to access clipboard: {error}");
             false
         }
     });
 
     ui.on_open_creator_link(|| {
         if let Err(error) = that("https://www.twitch.tv/cypherusuh__") {
-            eprintln!("Failed to open Twitch link: {error}");
+            eprintln!("[Twitch] Failed to open creator link: {error}");
         }
     });
 
-    ui.on_connection_toggle_requested(|| {
-        eprintln!("Twitch connection action is not wired up yet.");
+    // The button requests a state change. The polling thread determines
+    // the actual connection state and updates the UI.
+    let weak_ui = ui.as_weak();
+
+    ui.on_connection_toggle_requested(move || {
+        let Some(ui) = weak_ui.upgrade() else {
+            return;
+        };
+
+        if ui.get_twitch_connecting() {
+            return;
+        }
+
+        let should_connect = !ui.get_twitch_connected();
+
+        backend::request_twitch_connection(
+            api_base_url.clone(),
+            should_connect,
+        );
     });
 }
 
@@ -194,7 +230,6 @@ fn setup_playback_controls(
     });
 
     let sender = control_sender;
-
     let weak_ui = ui.as_weak();
 
     ui.on_playback_toggle_requested(move || {
@@ -231,6 +266,7 @@ fn start_backend_polling(
                 return;
             };
 
+            // This property means player/backend API connectivity only.
             ui.set_connected(snapshot.connected);
             ui.set_current_track(snapshot.current_track.into());
             ui.set_current_artist(snapshot.current_artist.into());
@@ -245,11 +281,8 @@ fn start_backend_polling(
             let model = Rc::new(VecModel::from(items));
             ui.set_queue_items(ModelRc::from(model));
 
-            // Playback properties are updated from the same backend snapshot
-            // that feeds the native mpv controller.
-            //
-            // These setters synchronize the display; they do not send
-            // playback commands back to mpv.
+            // These properties synchronize the UI with the backend.
+            // They do not send playback commands to mpv.
             ui.set_playback_position(snapshot.playback.position as f32);
             ui.set_playback_duration(snapshot.playback.duration as f32);
             ui.set_playback_volume(snapshot.playback.volume as f32);
@@ -262,6 +295,45 @@ fn start_backend_polling(
     });
 }
 
+fn start_twitch_status_polling(ui: &MainWindow, api_base_url: String) {
+    let weak_ui = ui.as_weak();
+
+    backend::start_twitch_status_polling(api_base_url, move |status| {
+        let weak_ui = weak_ui.clone();
+
+        let result = slint::invoke_from_event_loop(move || {
+            let Some(ui) = weak_ui.upgrade() else {
+                return;
+            };
+
+            // Show an explicit error state if the status endpoint fails.
+            let status_label = if status.error.is_some() {
+                "error"
+            } else if status.connecting {
+                "connecting"
+            } else if status.connected {
+                "connected"
+            } else {
+                "offline"
+            };
+
+            ui.set_twitch_connected(status.connected);
+            ui.set_twitch_connecting(status.connecting);
+            ui.set_twitch_status(status_label.into());
+
+            if let Some(username) = status.username {
+                if !username.trim().is_empty() {
+                    ui.set_username(username.into());
+                }
+            }
+        });
+
+        if let Err(error) = result {
+            eprintln!("[Twitch] Failed to schedule UI update: {error}");
+        }
+    });
+}
+
 fn setup_video_preview(
     ui: &MainWindow,
     video_controller: Rc<RefCell<VideoPreviewController>>,
@@ -270,35 +342,39 @@ fn setup_video_preview(
     let weak_ui = ui.as_weak();
     let video_timer = Timer::default();
 
-    video_timer.start(slint::TimerMode::Repeated, VIDEO_SYNC_INTERVAL, move || {
-        let Some(ui) = weak_ui.upgrade() else {
-            video_controller.borrow_mut().shutdown();
-            return;
-        };
-
-        let scale = ui.window().scale_factor();
-
-        let sync = match playback_sync.lock() {
-            Ok(sync) => sync.clone(),
-            Err(error) => {
-                eprintln!("[Video] Playback sync mutex poisoned: {error}");
+    video_timer.start(
+        slint::TimerMode::Repeated,
+        VIDEO_SYNC_INTERVAL,
+        move || {
+            let Some(ui) = weak_ui.upgrade() else {
+                video_controller.borrow_mut().shutdown();
                 return;
-            }
-        };
+            };
 
-        video_controller.borrow_mut().sync(
-            native_window_handle(&ui),
-            ui.get_video_visible(),
-            ui.get_current_media_url().as_str(),
-            sync.request_id.as_deref(),
-            &sync.playback,
-            sync.control.as_ref(),
-            (ui.get_video_preview_x() * scale).round() as i32,
-            (ui.get_video_preview_y() * scale).round() as i32,
-            (ui.get_video_preview_width() * scale).round() as i32,
-            (ui.get_video_preview_height() * scale).round() as i32,
-        );
-    });
+            let scale = ui.window().scale_factor();
+
+            let sync = match playback_sync.lock() {
+                Ok(sync) => sync.clone(),
+                Err(error) => {
+                    eprintln!("[Video] Playback sync mutex poisoned: {error}");
+                    return;
+                }
+            };
+
+            video_controller.borrow_mut().sync(
+                native_window_handle(&ui),
+                ui.get_video_visible(),
+                ui.get_current_media_url().as_str(),
+                sync.request_id.as_deref(),
+                &sync.playback,
+                sync.control.as_ref(),
+                (ui.get_video_preview_x() * scale).round() as i32,
+                (ui.get_video_preview_y() * scale).round() as i32,
+                (ui.get_video_preview_width() * scale).round() as i32,
+                (ui.get_video_preview_height() * scale).round() as i32,
+            );
+        },
+    );
 
     video_timer
 }
